@@ -1,0 +1,45 @@
+/* app styles */
+.app-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.app-logo {
+    font-weight: 700;
+    letter-spacing: 0.2px;
+}
+
+.container {
+    max-width: 1100px;
+    margin: 0 auto;
+}
+
+.page-hero {
+    padding: 20px 0 8px 0;
+}
+
+.page-hero h1 {
+    margin: 0 0 8px 0;
+    font-size: 1.8rem;
+}
+
+.subtitle {
+    margin: 0;
+    color: rgba(0, 0, 0, 0.65);
+}
+
+.app-grid {
+    margin-top: 16px;
+}
+
+/* small responsive tweaks */
+@media (max-width: 600px) {
+    .app-toolbar nav a {
+        display: none;
+    }
+
+    .page-hero h1 {
+        font-size: 1.4rem;
+    }
+}

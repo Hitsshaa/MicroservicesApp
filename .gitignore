@@ -1,0 +1,53 @@
+# General
+*.DS_Store
+node_modules/
+*.log
+logs/
+**/bin/
+**/obj/
+.env
+.env.*
+
+# Visual Studio / Rider
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Build results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# NuGet
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+.nuget/
+
+# Coverage
+coverage/
+*.coverage
+*.coveragexml
+
+# Angular / Frontend
+src/ClientApp/dist/
+src/ClientApp/.angular/cache/
+
+# Docker
+**/docker-compose.override.yml
+
+# Kubernetes local
+k8s/*.tmp.yaml
+
+# Secrets
+secrets.*.json
+**/appsettings.*.Local.json
+
+# IDE
+.idea/
+*.iml
+
+# Others
+Thumbs.db

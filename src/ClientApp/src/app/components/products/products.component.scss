@@ -1,0 +1,23 @@
+.products-container {
+    display: grid;
+    gap: 16px;
+    padding: 16px;
+}
+
+.row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.full {
+    width: 100%;
+}
+
+mat-table {
+    margin-top: 8px;
+}
+
+button[mat-button] {
+    text-transform: none;
+}

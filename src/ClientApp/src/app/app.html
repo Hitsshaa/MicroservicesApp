@@ -1,0 +1,29 @@
+<mat-toolbar color="primary" class="app-toolbar">
+  <div class="toolbar-left">
+    <span class="app-logo">Microservices</span>
+  </div>
+  <div class="toolbar-right">
+    <nav>
+      <a routerLink="/home" mat-button>Home</a>
+      <a routerLink="/users" mat-button>Users</a>
+      <a routerLink="/products" mat-button>Products</a>
+    </nav>
+  </div>
+</mat-toolbar>
+
+<main class="main">
+  <div class="content container">
+    <div class="page-hero">
+      <h1>Hello, {{ title() }}</h1>
+      <p class="subtitle">A starter microservices application with Angular + .NET</p>
+    </div>
+
+    <div class="app-grid">
+      <router-outlet />
+    </div>
+  </div>
+</main>
+
+<footer>
+  Built with <span style="color: #e91e63;">❤</span> • Angular + .NET • © 2025
+</footer>

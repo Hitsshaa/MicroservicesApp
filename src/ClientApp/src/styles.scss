@@ -1,0 +1,34 @@
+/* Use Angular Material prebuilt theme to avoid SASS theming function issues */
+@import '@angular/material/prebuilt-themes/indigo-pink.css';
+
+/* Optional: load Roboto here if you prefer local loading (index.html already loads it) */
+/* @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap'); */
+
+/* Global layout */
+html,
+body {
+    height: 100%;
+    margin: 0;
+    font-family: 'Roboto', system-ui, -apple-system, 'Segoe UI', 'Helvetica', 'Arial', sans-serif;
+    background: linear-gradient(180deg, #fafafa 0%, #f5f7fb 100%);
+    color: rgba(0, 0, 0, 0.87);
+}
+
+app-root {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+main {
+    flex: 1 0 auto;
+    padding: 24px;
+}
+
+footer {
+    flex-shrink: 0;
+    padding: 12px 24px;
+    text-align: center;
+    font-size: 0.9rem;
+    color: rgba(0, 0, 0, 0.6);
+}

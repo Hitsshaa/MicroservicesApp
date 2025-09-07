@@ -1,0 +1,120 @@
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  buildConfiguration: 'Release'
+  nodeVersion: '20.x'
+  dotnetVersion: '9.0.x'
+  containerRegistry: '$(dockerRegistryServiceConnection)'
+  imageTag: '$(Build.SourceVersion)'
+
+stages:
+  - stage: build
+    displayName: Build & Test
+    jobs:
+      - job: backend
+        displayName: Restore, Build & Test .NET
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: UseDotNet@2
+            inputs:
+              packageType: 'sdk'
+              version: '$(dotnetVersion)'
+
+          - script: dotnet restore MicroservicesApp.sln
+            displayName: Restore
+
+          - script: dotnet build MicroservicesApp.sln -c $(buildConfiguration) --no-restore
+            displayName: Build
+
+          - script: dotnet test MicroservicesApp.sln -c $(buildConfiguration) --no-build --verbosity normal
+            displayName: Test
+
+      - job: frontend
+        displayName: Build Angular
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: '$(nodeVersion)'
+          - script: |
+              cd src/ClientApp
+              npm ci
+              npm run build -- --configuration production
+            displayName: Angular Build
+
+  - stage: containerize
+    displayName: Build & Push Images
+    dependsOn: build
+    condition: succeeded()
+    jobs:
+      - job: docker
+        displayName: Docker Build & Push
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          - task: Docker@2
+            displayName: Build & Push api-gateway
+            inputs:
+              command: buildAndPush
+              repository: api-gateway
+              Dockerfile: src/ApiGateway/Dockerfile
+              tags: |
+                $(imageTag)
+          - task: Docker@2
+            displayName: Build & Push user-service
+            inputs:
+              command: buildAndPush
+              repository: user-service
+              Dockerfile: src/Microservices/UserService/Dockerfile
+              tags: |
+                $(imageTag)
+          - task: Docker@2
+            displayName: Build & Push product-service
+            inputs:
+              command: buildAndPush
+              repository: product-service
+              Dockerfile: src/Microservices/ProductService/Dockerfile
+              tags: |
+                $(imageTag)
+          - task: Docker@2
+            displayName: Build & Push angular-client
+            inputs:
+              command: buildAndPush
+              repository: angular-client
+              Dockerfile: src/ClientApp/Dockerfile
+              tags: |
+                $(imageTag)
+
+  - stage: deploy
+    displayName: Deploy to Kubernetes
+    dependsOn: containerize
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: k8s
+        environment: 'production'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: KubernetesManifest@1
+                  displayName: Deploy manifests
+                  inputs:
+                    action: 'deploy'
+                    manifests: 'k8s/*.yaml'
+                    containers: |
+                      angular-client:$(containerRegistry)/angular-client:$(imageTag)
+                      api-gateway:$(containerRegistry)/api-gateway:$(imageTag)
+                      user-service:$(containerRegistry)/user-service:$(imageTag)
+                      product-service:$(containerRegistry)/product-service:$(imageTag)
