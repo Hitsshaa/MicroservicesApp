@@ -47,45 +47,59 @@ jobs:
         run: npm run build -- --configuration production
 
   docker:
-    needs: [ backend, frontend ]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}/api-gateway,ghcr.io/${{ github.repository }}/user-service,ghcr.io/${{ github.repository }}/product-service,ghcr.io/${{ github.repository }}/angular-client
-      - name: Build & push API Gateway
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src/ApiGateway
-          push: true
-          tags: ghcr.io/${{ github.repository }}/api-gateway:latest
-      - name: Build & push User Service
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src/Microservices/UserService
-          push: true
-          tags: ghcr.io/${{ github.repository }}/user-service:latest
-      - name: Build & push Product Service
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src/Microservices/ProductService
-          push: true
-          tags: ghcr.io/${{ github.repository }}/product-service:latest
-      - name: Build & push Angular Client
-        uses: docker/build-push-action@v6
-        with:
-          context: ./src/ClientApp
-          push: true
-          tags: ghcr.io/${{ github.repository }}/angular-client:latest
+  needs: [ backend, frontend ]
+  runs-on: ubuntu-latest
+  permissions:
+    contents: read
+    packages: write
+  steps:
+    - uses: actions/checkout@v4
+
+    - name: Log in to GHCR
+      uses: docker/login-action@v3
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    # Create lowercase repository variable
+    - name: Set lowercase repository name
+      run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+    - name: Extract metadata (tags, labels)
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: |
+          ghcr.io/${{ env.REPO }}/api-gateway
+          ghcr.io/${{ env.REPO }}/user-service
+          ghcr.io/${{ env.REPO }}/product-service
+          ghcr.io/${{ env.REPO }}/angular-client
+
+    - name: Build & push API Gateway
+      uses: docker/build-push-action@v6
+      with:
+        context: ./src/ApiGateway
+        push: true
+        tags: ghcr.io/${{ env.REPO }}/api-gateway:latest
+
+    - name: Build & push User Service
+      uses: docker/build-push-action@v6
+      with:
+        context: ./src/Microservices/UserService
+        push: true
+        tags: ghcr.io/${{ env.REPO }}/user-service:latest
+
+    - name: Build & push Product Service
+      uses: docker/build-push-action@v6
+      with:
+        context: ./src/Microservices/ProductService
+        push: true
+        tags: ghcr.io/${{ env.REPO }}/product-service:latest
+
+    - name: Build & push Angular Client
+      uses: docker/build-push-action@v6
+      with:
+        context: ./src/ClientApp
+        push: true
+        tags: ghcr.io/${{ env.REPO }}/angular-client:latest
