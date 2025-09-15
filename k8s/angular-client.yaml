@@ -1,3 +1,42 @@
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: angular-client
+#   namespace: angular-micro
+# spec:
+#   replicas: 1
+#   selector:
+#     matchLabels:
+#       app: angular-client
+#   template:
+#     metadata:
+#       labels:
+#         app: angular-client
+#     spec:
+#       containers:
+#         - name: angular-client
+#           image: ghcr.io/hitsshaa/microservicesapp/angular-client:latest
+#           ports:
+#             - containerPort: 80
+#           env:
+#             - name: API_BASE_URL
+#               value: http://api-gateway.angular-micro.svc.cluster.local:5000/api
+# ---
+# apiVersion: v1
+# kind: Service
+# metadata:
+#   name: angular-client
+#   namespace: angular-micro
+# spec:
+#   selector:
+#     app: angular-client
+#   ports:
+#     - port: 80
+#       targetPort: 80
+#       protocol: TCP
+#       name: http
+#   type: ClusterIP
+
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -19,8 +58,10 @@ spec:
           ports:
             - containerPort: 80
           env:
+            - name: NODE_ENV
+              value: "production"
             - name: API_BASE_URL
-              value: http://api-gateway.angular-micro.svc.cluster.local:5000/api
+              value: "/api"   # goes through ingress
 ---
 apiVersion: v1
 kind: Service
@@ -28,11 +69,9 @@ metadata:
   name: angular-client
   namespace: angular-micro
 spec:
+  type: ClusterIP
   selector:
     app: angular-client
   ports:
     - port: 80
       targetPort: 80
-      protocol: TCP
-      name: http
-  type: ClusterIP
