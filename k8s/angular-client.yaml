@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: angular-client
-          image: ghcr.io/your-org/angular-client:latest
+          image: ghcr.io/hitsshaa/microservicesapp/angular-client:latest
           ports:
             - containerPort: 80
           env:

@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: user-service
-          image: ghcr.io/your-org/user-service:latest
+          image: ghcr.io/hitsshaa/microservicesapp/user-service:latest
           ports:
             - containerPort: 5100
           readinessProbe:

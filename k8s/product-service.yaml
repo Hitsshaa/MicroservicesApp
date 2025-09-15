@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: product-service
-          image: ghcr.io/your-org/product-service:latest
+          image: ghcr.io/hitsshaa/microservicesapp/product-service:latest
           ports:
             - containerPort: 5200
           readinessProbe:

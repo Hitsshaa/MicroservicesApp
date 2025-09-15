@@ -67,6 +67,21 @@
         "DELETE"
       ],
       "Key": "products"
+    },
+    {
+      "DownstreamPathTemplate": "/health",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "user-service",
+          "Port": 5100
+        }
+      ],
+      "UpstreamPathTemplate": "/health",
+      "UpstreamHttpMethod": [
+        "GET"
+      ],
+      "Key": "health"
     }
   ],
   "GlobalConfiguration": {
