@@ -1,4 +1,4 @@
 export const environment = {
     production: true,
-    apiUrl: 'http://local.micro/api'
+    apiUrl: 'http://api.local.micro/api'
 };

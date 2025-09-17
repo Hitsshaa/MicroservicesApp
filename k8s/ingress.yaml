@@ -8,7 +8,7 @@ metadata:
 spec:
   ingressClassName: nginx
   rules:
-    - host: local.micro
+    - host: api.local.micro
       http:
         paths:
           # API backend (preserve everything after /api)
@@ -19,8 +19,10 @@ spec:
                 name: api-gateway
                 port:
                   number: 5000
-
-          # Angular frontend (catch all other routes and rewrite to /index.html)
+        # Angular frontend (catch all other routes and rewrite to /index.html)
+    - host: local.micro
+      http:
+        paths:
           - path: /(.*)
             pathType: ImplementationSpecific
             backend:
