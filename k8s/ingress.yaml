@@ -4,31 +4,27 @@ metadata:
   name: micro-ingress
   namespace: angular-micro
   annotations:
-    kubernetes.io/ingress.class: nginx
     nginx.ingress.kubernetes.io/use-regex: "true"
-    nginx.ingress.kubernetes.io/rewrite-target: /$1
-    # For Angular client-side routing (fallback to index.html)
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      rewrite ^/(?!api)(.*)$ / break;
 spec:
+  ingressClassName: nginx
   rules:
     - host: local.micro
       http:
         paths:
-          # Angular frontend
-          - path: "/?(.*)"
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: angular-client
-                port:
-                  number: 80
-
-          # API backend
-          - path: "/api/?(.*)"
+          # API backend (preserve everything after /api)
+          - path: /api(/|$)(.*)
             pathType: ImplementationSpecific
             backend:
               service:
                 name: api-gateway
                 port:
                   number: 5000
+
+          # Angular frontend (catch all other routes and rewrite to /index.html)
+          - path: /(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: angular-client
+                port:
+                  number: 80
