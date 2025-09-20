@@ -6,7 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 var cs = builder.Configuration.GetConnectionString("DefaultConnection")
          ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-         ?? "Server=sqlserver;Database=MicroservicesDb;User=hitesh;Password=Hitesh12;TrustServerCertificate=True;";
+         ?? "Server=sqlserver;Database=UserServiceDB;User=hitesh;Password=Hitesh12;TrustServerCertificate=True;";
 
 builder.Services.AddDbContext<UserDbContext>(o => o.UseSqlServer(cs));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
