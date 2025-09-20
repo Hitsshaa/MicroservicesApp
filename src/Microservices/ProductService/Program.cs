@@ -27,6 +27,7 @@ using (var scope = app.Services.CreateScope())
     
     try
     {
+        var retries = 10;
         // Ensure database is created even if migrations are pending
         while (retries > 0)
         {
