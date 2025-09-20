@@ -6,7 +6,7 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 var cs = builder.Configuration.GetConnectionString("DefaultConnection")
          ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-         ?? "Server=sqlserver;Database=ProductServiceDB;User=sa;Password=Your_strong!Passw0rd;TrustServerCertificate=True;";
+         ?? "Server=sqlserver;Database=ProductServiceDB;User=sa;Password=Hitesh12@;TrustServerCertificate=True;";
 
 builder.Services.AddDbContext<ProductDbContext>(o => o.UseSqlServer(cs));
 builder.Services.AddScoped<IProductRepository, ProductRepository>();
