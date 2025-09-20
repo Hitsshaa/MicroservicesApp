@@ -1,59 +1,3 @@
-# apiVersion: apps/v1
-# kind: Deployment
-# metadata:
-#   name: product-service
-#   namespace: angular-micro
-# spec:
-#   replicas: 1
-#   selector:
-#     matchLabels:
-#       app: product-service
-#   template:
-#     metadata:
-#       labels:
-#         app: product-service
-#     spec:
-#       containers:
-#         - name: product-service
-#           image: ghcr.io/hitsshaa/microservicesapp/product-service:latest
-#           ports:
-#             - containerPort: 5200
-#           readinessProbe:
-#             httpGet:
-#               path: /health
-#               port: 5200
-#             initialDelaySeconds: 5
-#             periodSeconds: 10
-#           livenessProbe:
-#             httpGet:
-#               path: /health
-#               port: 5200
-#             initialDelaySeconds: 15
-#             periodSeconds: 20
-#           env:
-#             - name: ASPNETCORE_URLS
-#               value: http://+:5200
-#             - name: ConnectionStrings__DefaultConnection
-#               valueFrom:
-#                 secretKeyRef:
-#                   name: product-service-secret
-#                   key: connection-string
-# ---
-# apiVersion: v1
-# kind: Service
-# metadata:
-#   name: product-service
-#   namespace: angular-micro
-# spec:
-#   selector:
-#     app: product-service
-#   ports:
-#     - port: 5200
-#       targetPort: 5200
-#       protocol: TCP
-#       name: http
-#   type: ClusterIP
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,21 +13,34 @@ spec:
       labels:
         app: product-service
     spec:
+      initContainers:
+      - name: wait-for-sql
+        image: mcr.microsoft.com/mssql-tools
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Waiting for SQL Server..."
+            until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@' -Q "SELECT 1" &>/dev/null
+            do
+              echo -n "."
+              sleep 5
+            done
       containers:
-        - name: product-service
-          image: ghcr.io/hitsshaa/microservicesapp/product-service:latest
-          ports:
-            - containerPort: 5200
-          env:
-            - name: ASPNETCORE_ENVIRONMENT
-              value: "Development"
-            - name: ASPNETCORE_URLS
-              value: "http://+:5200"
-            - name: ConnectionStrings__DefaultConnection
-              valueFrom:
-                secretKeyRef:
-                  name: product-service-secret
-                  key: connection-string
+      - name: product-service
+        image: ghcr.io/hitsshaa/microservicesapp/product-service:latest
+        ports:
+        - containerPort: 5200
+        env:
+        - name: ASPNETCORE_ENVIRONMENT
+          value: "Development"
+        - name: ASPNETCORE_URLS
+          value: "http://+:5200"
+        - name: ConnectionStrings__DefaultConnection
+          valueFrom:
+            secretKeyRef:
+              name: product-service-secret
+              key: connection-string
 ---
 apiVersion: v1
 kind: Service
@@ -95,5 +52,5 @@ spec:
   selector:
     app: product-service
   ports:
-    - port: 5200
-      targetPort: 5200
+  - port: 5200
+    targetPort: 5200

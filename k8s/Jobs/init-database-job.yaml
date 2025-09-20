@@ -1,0 +1,23 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-databases
+  namespace: angular-micro
+spec:
+  template:
+    spec:
+      containers:
+        - name: init-db
+          image: mcr.microsoft.com/mssql-tools
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for SQL Server to be ready..."
+              until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@' -Q "SELECT 1" > /dev/null 2>&1; do
+                echo "SQL Server not ready yet..."
+                sleep 5
+              done
+              echo "Creating databases if they do not exist..."
+              /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@' -Q "IF DB_ID('UserServiceDB') IS NULL CREATE DATABASE UserServiceDB; IF DB_ID('ProductServiceDB') IS NULL CREATE DATABASE ProductServiceDB;"
+      restartPolicy: OnFailure

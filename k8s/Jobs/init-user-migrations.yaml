@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: init-user-migrations
+  namespace: angular-micro
+spec:
+  template:
+    spec:
+      containers:
+      - name: migrate
+        image: mcr.microsoft.com/dotnet/sdk:9.0
+        workingDir: /app
+        command:
+          - /bin/sh
+          - -c
+          - |
+            echo "Waiting for SQL Server..."
+            until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P Hitesh12@ -Q "SELECT 1" > /dev/null 2>&1; do
+              echo "SQL Server not ready, retrying in 5s..."
+              sleep 5
+            done
+            echo "SQL Server ready. Running EF migrations..."
+            cd /app
+            git clone https://github.com/your-repo/UserService.git .
+            dotnet restore
+            dotnet tool install --global dotnet-ef
+            export PATH="$PATH:/root/.dotnet/tools"
+            dotnet ef database update --connection "$ConnectionStrings__DefaultConnection"
+        env:
+        - name: ConnectionStrings__DefaultConnection
+          valueFrom:
+            secretKeyRef:
+              name: user-service-secret
+              key: connection-string
+      restartPolicy: Never
+  backoffLimit: 1

@@ -28,7 +28,20 @@ using (var scope = app.Services.CreateScope())
     try
     {
         // Ensure database is created even if migrations are pending
-        db.Database.EnsureCreated();
+        while (retries > 0)
+        {
+            try
+            {
+                db.Database.Migrate();
+                break;
+            }
+            catch
+            {
+                retries--;
+                Console.WriteLine("Waiting for SQL Server...");
+                Thread.Sleep(5000);
+            }
+        }
         logger.LogInformation("Database created or already exists");
 
         // Seed the database
