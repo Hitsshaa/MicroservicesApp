@@ -21,7 +21,7 @@ spec:
           - -c
           - |
             echo "Waiting for SQL Server..."
-            until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@' -Q "SELECT 1" &>/dev/null
+            until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@' -Q "SELECT name FROM sys.databases WHERE name='ProductServiceDB'" -h -1 | grep ProductServiceDB
             do
               echo -n "."
               sleep 5

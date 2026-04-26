@@ -5,10 +5,16 @@ metadata:
   namespace: angular-micro
   annotations:
     nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /index.html
+    # Exclude static files from rewrite
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($request_uri ~* "\.(?:js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$") {
+        break;
+      }
 spec:
   ingressClassName: nginx
   rules:
-    - host: api.local.micro
+    - host: localhost
       http:
         paths:
           # API backend (preserve everything after /api)
@@ -19,10 +25,7 @@ spec:
                 name: api-gateway
                 port:
                   number: 5000
-        # Angular frontend (catch all other routes and rewrite to /index.html)
-    - host: local.micro
-      http:
-        paths:
+          # Angular frontend (catch all other routes)
           - path: /(.*)
             pathType: ImplementationSpecific
             backend:

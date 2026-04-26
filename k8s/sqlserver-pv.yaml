@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: sqlserver-pv
+  namespace: angular-micro
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: hostpath
+  hostPath:
+    path: /tmp/sqlserver-data   # this folder will store SQL Server data on your local machine
+  persistentVolumeReclaimPolicy: Retain

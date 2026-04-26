@@ -69,7 +69,7 @@ metadata:
   name: angular-client
   namespace: angular-micro
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: angular-client
   ports:
