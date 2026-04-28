@@ -1,4 +1,4 @@
-# Stage 1: Build the Angular app
+# Stage 1: Build the Angular app (Alpine(minimal Linux distribution) is one of the most important Docker optimization concepts) -- Alpine Node image: =100mb and ubuntu = 1gb.
 FROM node:22-alpine AS build
 
 # Set working directory inside container
@@ -16,7 +16,7 @@ COPY . .
 # Build the Angular app in production mode
 RUN npm run build -- --output-path=dist/client-app --configuration production
 
-# Stage 2: Serve the app with Nginx
+# Stage 2: Serve the app with Nginx 
 FROM nginx:stable-alpine
 
 # Remove default nginx welcome files, copy built Angular app into nginx html root

@@ -12,7 +12,7 @@ pr:
 
 variables:
   buildConfiguration: 'Release'
-  nodeVersion: '20.x'
+  nodeVersion: '22.x'
   dotnetVersion: '9.0.x'
   containerRegistry: '$(dockerRegistryServiceConnection)'
   imageTag: '$(Build.SourceVersion)'
