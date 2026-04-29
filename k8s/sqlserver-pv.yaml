@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: sqlserver-pv
-  namespace: angular-micro
+  namespace: angular-micro  # pv is cluster level scope(global level) not namespace level resource its get ignore by kubnetes
 spec:
   capacity:
     storage: 1Gi
@@ -10,5 +10,5 @@ spec:
     - ReadWriteOnce
   storageClassName: hostpath
   hostPath:
-    path: /tmp/sqlserver-data   # this folder will store SQL Server data on your local machine
+    path: /tmp/sqlserver-data   # this folder will store SQL Server data on your local machine or at node level 
   persistentVolumeReclaimPolicy: Retain

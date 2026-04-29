@@ -18,15 +18,15 @@ metadata:
   namespace: angular-micro
 spec:
   replicas: 1
-  selector:
-    matchLabels:
+  selector: 
+    matchLabels: #Finds existing pods
       app: sqlserver
   template:
     metadata:
-      labels:
+      labels: #Labels newly created pods
         app: sqlserver
     spec:
-      securityContext:
+      securityContext: # run as root inside the container
         runAsUser: 0
       containers:
         - name: sqlserver
@@ -40,7 +40,7 @@ spec:
               value: "Hitesh12@A"   # ensure it meets complexity rules
             - name: MSSQL_PID
               value: "Express"
-          volumeMounts:
+          volumeMounts: #Connect external storage to a folder inside the container.
             - name: sql-data
               mountPath: /var/opt/mssql
       volumes:
@@ -60,3 +60,33 @@ spec:
   ports:
     - port: 1433
       targetPort: 1433
+
+
+# To attach Azure storage in Kubernetes, create a StorageClass using Azure’s CSI driver 
+# (disk.csi.azure.com for Azure Disk or file.csi.azure.com for Azure Files), then create a PVC referencing that 
+# StorageClass. Kubernetes dynamically provisions and mounts Azure-managed storage for your workloads.
+
+# apiVersion: storage.k8s.io/v1
+# kind: StorageClass
+# metadata:
+#   name: azure-sql-storage
+# provisioner: disk.csi.azure.com
+# parameters:
+#   skuName: StandardSSD_LRS  #Azure disk type: 1 StandardSSD_LRS 2 Premium_LRS 3 UltraSSD_LRS
+# reclaimPolicy: Retain
+# volumeBindingMode: WaitForFirstConsumer
+# allowVolumeExpansion: true
+
+
+# apiVersion: v1
+# kind: PersistentVolumeClaim
+# metadata:
+#   name: sqlserver-pvc
+#   namespace: angular-micro
+# spec:
+#   accessModes:
+#     - ReadWriteOnce
+#   storageClassName: azure-sql-storage
+#   resources:
+#     requests:
+#       storage: 20Gi

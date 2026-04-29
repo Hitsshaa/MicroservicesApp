@@ -69,9 +69,20 @@ metadata:
   name: angular-client
   namespace: angular-micro
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: angular-client
   ports:
     - port: 80
       targetPort: 80
+
+
+#   User Browser
+#     ↓
+# LoadBalancer Service
+#     ↓
+# Angular Client Pod
+#     ↓
+# /api requests
+#     ↓
+# API Gateway / Ingress
