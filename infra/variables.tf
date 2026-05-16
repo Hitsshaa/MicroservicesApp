@@ -7,7 +7,7 @@ variable "aws_region" {
 variable "github_repository" {
   description = "GitHub repository allowed to assume the deployer role (owner/repo)"
   type        = string
-  default     = "hitsshaa/AngularDotNetMicroservices"
+  default     = "Hitsshaa/MicroservicesApp"
 }
 
 variable "github_branch" {

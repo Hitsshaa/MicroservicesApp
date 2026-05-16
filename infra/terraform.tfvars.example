@@ -2,7 +2,7 @@
 # terraform.tfvars is in .gitignore — never commit secrets.
 
 aws_region        = "us-east-1"
-github_repository = "hitsshaa/AngularDotNetMicroservices"
+github_repository = "Hitsshaa/MicroservicesApp"
 github_branch     = "main"
 
 # Must be 8-128 chars and include upper, lower, digit, and symbol per SQL Server policy.
