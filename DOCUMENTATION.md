@@ -15,7 +15,8 @@ A cloud-native reference architecture combining an Angular 20 SPA, .NET 9 micros
 | Cache | Redis 7-alpine (provisioned, not yet integrated) |
 | Local Orchestration | Docker Compose v3.9 |
 | Cloud Orchestration | Kubernetes (namespace `angular-micro`) with NGINX Ingress |
-| CI/CD | GitHub Actions + Azure Pipelines |
+| CI/CD | GitHub Actions (build → ECR → EKS rollout + S3 sync + CloudFront invalidate) |
+| AWS Infrastructure | Terraform (community modules for VPC + EKS, raw resources for the rest) |
 | Container Registry | GitHub Container Registry (ghcr.io) |
 
 ---
@@ -25,36 +26,42 @@ A cloud-native reference architecture combining an Angular 20 SPA, .NET 9 micros
 ```
 AngularDotNetMicroservices/
 ├── MicroservicesApp.sln              # Solution: ApiGateway, UserService, ProductService
-├── docker-compose.yml                # Local multi-container stack
-├── azure-pipelines.yml               # Azure DevOps pipeline
-├── deploy-local.sh                   # End-to-end K8s deploy + DB bootstrap script
-├── start-services.sh / .bat          # Docker Compose launcher
+├── docker-compose.yml                # Local multi-container stack (with in-container SQL Server)
+├── start-services.sh / .bat          # Docker Compose launcher (local dev only)
 ├── README.md / DOCUMENTATION.md
 ├── .github/
-│   ├── workflows/ci-cd.yml           # GitHub Actions pipeline
+│   ├── workflows/ci-cd.yml           # GitHub Actions: test → ECR push → EKS rollout → S3 sync → CloudFront invalidate (OIDC, no static keys)
 │   └── dependabot.yml                # npm + nuget + docker weekly updates
 ├── src/
 │   ├── ApiGateway/                   # Ocelot gateway (.NET 9)
 │   ├── Microservices/
 │   │   ├── UserService/              # User CRUD (.NET 9 + EF Core)
 │   │   └── ProductService/           # Product CRUD (.NET 9 + EF Core)
-│   ├── ClientApp/                    # Angular 20 SPA
+│   ├── ClientApp/                    # Angular 20 SPA (deployed to S3 + CloudFront in prod)
 │   └── Shared/                       # Reserved for shared libraries (currently empty)
-├── k8s/                              # Kubernetes manifests
+├── k8s/                              # AWS-flavoured Kubernetes manifests
 │   ├── namespace.yaml
-│   ├── angular-client.yaml
-│   ├── api-gateway.yaml
-│   ├── user-service.yaml
-│   ├── product-service.yaml
-│   ├── sql-server.yaml
-│   ├── sqlserver-pv.yaml
-│   ├── ingress.yaml
-│   ├── nodeport.yaml
-│   ├── redis.yaml
-│   └── Jobs/                         # DB init / migration jobs
-├── scripts/
-│   ├── deploy.sh                     # Apply manifests with dynamic image tags (uses yq)
-│   └── cleanup.sh                    # Remove all K8s resources
+│   ├── api-gateway.yaml              # uses PLACEHOLDER_ECR_URI rendered at deploy time
+│   ├── user-service.yaml             # CSI volume mount for Secrets Manager
+│   ├── product-service.yaml          # CSI volume mount for Secrets Manager
+│   ├── serviceaccount-user.yaml      # IRSA-annotated SA
+│   ├── serviceaccount-product.yaml   # IRSA-annotated SA
+│   ├── secret-provider-class-user.yaml
+│   ├── secret-provider-class-product.yaml
+│   └── ingress-alb.yaml              # AWS Load Balancer Controller Ingress
+├── infra/                            # Terraform for the AWS stack
+│   ├── main.tf / variables.tf / outputs.tf
+│   ├── network.tf                    # VPC module (2 AZs, public/private subnets, single NAT)
+│   ├── eks.tf                        # EKS module + access entry for the deployer role
+│   ├── ecr.tf                        # 3 repos + lifecycle policies
+│   ├── rds.tf                        # SQL Server Express + SG ingress from node SG
+│   ├── secrets.tf                    # 2 Secrets Manager secrets w/ connection strings
+│   ├── s3-cloudfront.tf              # private bucket + OAC + 2-origin distribution
+│   ├── iam-github-oidc.tf            # OIDC provider + gh-actions-deployer role
+│   ├── irsa.tf                       # per-pod IRSA roles
+│   ├── helm.tf                       # ALB controller + Secrets Store CSI driver
+│   └── README.md                     # two-phase apply workflow
+├── docs/superpowers/specs/           # Design docs (AWS deployment spec lives here)
 └── tests/                            # Reserved (no test projects yet)
 ```
 
@@ -266,29 +273,18 @@ dotnet run --project src/Microservices/ProductService/ProductService.csproj
 cd src/ClientApp && npm install && npm start
 ```
 
-### 8.3 Kubernetes — `deploy-local.sh`
+### 8.3 AWS (EKS + RDS + S3/CloudFront) — Terraform
 
-End-to-end script that:
-1. Creates / recreates the `angular-micro` namespace
-2. Installs the NGINX Ingress controller
-3. Creates connection-string Secrets
-4. Applies all manifests under `k8s/`
-5. Waits for SQL Server readiness, then bootstraps `UserServiceDB` and `ProductServiceDB` using local `sqlcmd`, `kubectl exec`, or a temporary `mssql-tools` pod (whichever is available)
-6. Waits for microservice pods to be ready and prints final status
-
-```bash
-./deploy-local.sh
+```powershell
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # then edit rds_admin_password
+terraform init
+terraform apply -var skip_cloudfront=true      # ~25 min — Phase 1
+# ... seed databases + apply k8s manifests so the ALB exists ...
+terraform apply -var skip_cloudfront=false     # ~10 min — Phase 2 (CloudFront)
 ```
 
-### 8.4 Kubernetes — Direct apply
-
-```bash
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/
-kubectl get pods -n angular-micro
-```
-
-`scripts/deploy.sh` is a slimmer alternative that uses `yq` to inject dynamic image tags before applying.
+See `infra/README.md` for the full two-phase workflow and tear-down command (`terraform destroy`).
 
 ---
 
@@ -306,14 +302,7 @@ Triggers: push and PR on `main`/`develop`. Concurrency-limited to one run per br
    - `ghcr.io/<repo>/product-service:latest`
    - `ghcr.io/<repo>/angular-client:latest`
 
-### 9.2 Azure Pipelines — `azure-pipelines.yml`
-
-Three stages:
-1. **Build** — parallel backend (.NET 9) + frontend (Node 20)
-2. **Containerize** — builds and pushes images tagged with `$(Build.SourceVersion)`
-3. **Deploy** — applies `k8s/*.yaml` via the `KubernetesManifest` task (only on `main`)
-
-### 9.3 Dependabot — `.github/dependabot.yml`
+### 9.2 Dependabot — `.github/dependabot.yml`
 
 Weekly checks for: `npm` (under `src/ClientApp`), `nuget` (root), and `docker` (root).
 
@@ -335,8 +324,7 @@ Frontend `HttpErrorInterceptor` attaches a UUID `X-Request-Id` to every request 
 
 - **No authentication/authorization** is currently implemented. All endpoints are anonymous.
 - CORS is set to **`allow-all`** on every service — acceptable for local dev, must tighten before any shared deployment.
-- DB credentials are committed in plaintext in `docker-compose.yml` and `k8s/sql-server.yaml`. Move to a secrets manager (Kubernetes Secrets sealed with SealedSecrets / SOPS, Azure Key Vault, AWS Secrets Manager, etc.) before promoting beyond local.
-- SA passwords differ between Docker Compose (`Hitesh12@`) and Kubernetes (`Hitesh12@A`) — keep this in mind when troubleshooting connection issues.
+- DB credentials in `docker-compose.yml` are still plaintext — acceptable only because compose targets local dev. The AWS production path stores credentials in **AWS Secrets Manager** (provisioned by `infra/secrets.tf`) and mounts them into pods via the Secrets Store CSI driver.
 
 ---
 
@@ -348,25 +336,25 @@ The `tests/` directory and `MicroservicesApp.sln` currently contain **no test pr
 
 ## 13. Ports Reference
 
-| Service | Local (compose) | K8s internal | K8s external |
+| Service | Local (compose) | EKS internal | External (AWS) |
 |---|---|---|---|
-| Angular client | 4200 | 80 | LoadBalancer + Ingress `/` |
-| API Gateway | 5000 | 5000 | Ingress `/api/*` |
+| Angular client | 4200 | — (served from S3) | CloudFront `/` |
+| API Gateway | 5000 | 5000 | ALB Ingress + CloudFront `/api/*` |
 | UserService | 5100 | 5100 | (internal only) |
 | ProductService | 5200 | 5200 | (internal only) |
-| SQL Server | 1433 | 1433 | (internal only) |
-| Redis | 6379 | 6379 | (internal only) |
+| SQL Server | 1433 | — (RDS) | (internal only, via SG from EKS nodes) |
 
 ---
 
 ## 14. Roadmap
 
-- Centralized authentication (IdentityServer / Keycloak / Azure AD B2C)
-- Asynchronous communication via RabbitMQ or Kafka
-- OpenTelemetry tracing + Prometheus metrics + Grafana dashboards + Loki logs
+- Centralized authentication (Cognito / IdentityServer / Keycloak)
+- Asynchronous communication via RabbitMQ or Kafka (Amazon MQ or MSK on AWS)
+- OpenTelemetry tracing + Prometheus metrics + Grafana dashboards + Loki logs (or AWS X-Ray + CloudWatch)
 - Real test suites (xUnit/NUnit for .NET, Jasmine + Cypress/Playwright for Angular)
-- Wire up Redis cache for read-heavy product queries
-- Tighten CORS and replace plaintext DB credentials
+- Wire up Redis cache for read-heavy product queries (ElastiCache on AWS)
+- Tighten CORS
+- Custom domain + Route 53 + ACM cert in front of CloudFront
 
 ---
 
@@ -379,7 +367,8 @@ The `tests/` directory and `MicroservicesApp.sln` currently contain **no test pr
 | User schema / seed | `src/Microservices/UserService/Data/UserDbContext.cs` |
 | Product schema / seed | `src/Microservices/ProductService/Data/ProductDbContext.cs` |
 | Local stack | `docker-compose.yml` |
-| K8s end-to-end deploy | `deploy-local.sh` |
-| GitHub CI | `.github/workflows/ci-cd.yml` |
-| Azure CI | `azure-pipelines.yml` |
+| AWS infrastructure | `infra/` (Terraform) |
+| AWS deploy workflow | `infra/README.md` |
+| CI/CD | `.github/workflows/ci-cd.yml` |
+| Deployment design spec | `docs/superpowers/specs/2026-05-16-aws-deployment-design.md` |
 | HTTP error/uuid logic | `src/ClientApp/src/app/core/http-error.interceptor.ts` |
