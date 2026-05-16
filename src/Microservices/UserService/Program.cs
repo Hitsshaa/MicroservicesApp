@@ -6,9 +6,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 var cs = builder.Configuration.GetConnectionString("DefaultConnection")
          ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-         ?? "Server=sqlserver;Database=UserServiceDB;User=sa;Password=Hitesh12@;TrustServerCertificate=True;";
+         ?? "Host=postgres;Port=5432;Database=userservicedb;Username=postgres;Password=postgres";
 
-builder.Services.AddDbContext<UserDbContext>(o => o.UseSqlServer(cs));
+builder.Services.AddDbContext<UserDbContext>(o => o.UseNpgsql(cs));
 builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -24,34 +24,32 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<UserDbContext>();
-    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Migrations");
-    
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Schema");
+
+    var retries = 10;
+    while (retries > 0)
+    {
+        try
+        {
+            db.Database.EnsureCreated();
+            logger.LogInformation("Database schema ready");
+            break;
+        }
+        catch (Exception ex)
+        {
+            retries--;
+            logger.LogWarning(ex, "Waiting for PostgreSQL... ({Retries} retries left)", retries);
+            Thread.Sleep(5000);
+        }
+    }
+
     try
     {
-        // Ensure database is created even if migrations are pending
-        var retries = 10;
-        while (retries > 0)
-        {
-            try
-            {
-                db.Database.Migrate();
-                break;
-            }
-            catch
-            {
-                retries--;
-                Console.WriteLine("Waiting for SQL Server...");
-                Thread.Sleep(5000);
-            }
-        }
-        logger.LogInformation("Database created or already exists");
-
-        // Seed the database
         await UserDbSeeder.SeedAsync(db, logger);
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "An error occurred while initializing the database");
+        logger.LogError(ex, "Failed to seed database");
     }
 }
 

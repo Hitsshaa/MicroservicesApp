@@ -1,6 +1,10 @@
+# Each service's connection string is stored as a separate Secrets Manager
+# entry, and ECS task definitions reference them via the task-definition
+# `secrets` block (much simpler than the EKS Secrets Store CSI Driver was).
+
 locals {
-  user_db_connection_string    = "Server=${aws_db_instance.sqlserver.address},1433;Database=UserServiceDB;User Id=${var.rds_admin_username};Password=${var.rds_admin_password};TrustServerCertificate=True;"
-  product_db_connection_string = "Server=${aws_db_instance.sqlserver.address},1433;Database=ProductServiceDB;User Id=${var.rds_admin_username};Password=${var.rds_admin_password};TrustServerCertificate=True;"
+  user_db_connection_string    = "Host=${aws_db_instance.postgres.address};Port=5432;Database=userservicedb;Username=${var.rds_admin_username};Password=${var.rds_admin_password}"
+  product_db_connection_string = "Host=${aws_db_instance.postgres.address};Port=5432;Database=productservicedb;Username=${var.rds_admin_username};Password=${var.rds_admin_password}"
 }
 
 resource "aws_secretsmanager_secret" "user_db" {
@@ -10,10 +14,8 @@ resource "aws_secretsmanager_secret" "user_db" {
 }
 
 resource "aws_secretsmanager_secret_version" "user_db" {
-  secret_id = aws_secretsmanager_secret.user_db.id
-  secret_string = jsonencode({
-    connectionString = local.user_db_connection_string
-  })
+  secret_id     = aws_secretsmanager_secret.user_db.id
+  secret_string = local.user_db_connection_string
 }
 
 resource "aws_secretsmanager_secret" "product_db" {
@@ -23,8 +25,6 @@ resource "aws_secretsmanager_secret" "product_db" {
 }
 
 resource "aws_secretsmanager_secret_version" "product_db" {
-  secret_id = aws_secretsmanager_secret.product_db.id
-  secret_string = jsonencode({
-    connectionString = local.product_db_connection_string
-  })
+  secret_id     = aws_secretsmanager_secret.product_db.id
+  secret_string = local.product_db_connection_string
 }

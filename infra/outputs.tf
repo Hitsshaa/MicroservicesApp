@@ -8,9 +8,9 @@ output "aws_region" {
   value       = var.aws_region
 }
 
-output "eks_cluster_name" {
-  description = "EKS cluster name"
-  value       = module.eks.cluster_name
+output "ecs_cluster_name" {
+  description = "ECS cluster name"
+  value       = aws_ecs_cluster.this.name
 }
 
 output "ecr_registry_url" {
@@ -24,8 +24,13 @@ output "ecr_repository_urls" {
 }
 
 output "rds_endpoint" {
-  description = "RDS SQL Server endpoint hostname"
-  value       = aws_db_instance.sqlserver.address
+  description = "RDS Postgres endpoint hostname"
+  value       = aws_db_instance.postgres.address
+}
+
+output "alb_dns_name" {
+  description = "ALB DNS name (the api-gateway entrypoint)"
+  value       = aws_lb.api.dns_name
 }
 
 output "spa_bucket_name" {
@@ -48,45 +53,42 @@ output "gh_actions_deployer_role_arn" {
   value       = aws_iam_role.gh_actions_deployer.arn
 }
 
-output "user_service_irsa_role_arn" {
-  description = "IRSA role for user-service pods (read user-service secret)"
-  value       = aws_iam_role.user_service_irsa.arn
-}
-
-output "product_service_irsa_role_arn" {
-  description = "IRSA role for product-service pods (read product-service secret)"
-  value       = aws_iam_role.product_service_irsa.arn
-}
-
 output "next_steps" {
   description = "What to do after terraform apply succeeds"
   value       = <<EOT
 
 ================================================================
-Terraform apply complete. Manual finishing steps:
+Terraform apply complete.
 
-1. Update kubeconfig so kubectl can talk to the new cluster:
-     aws eks update-kubeconfig --name ${module.eks.cluster_name} --region ${var.aws_region}
+Resources:
+  ECS cluster:        ${aws_ecs_cluster.this.name}
+  RDS endpoint:       ${aws_db_instance.postgres.address}
+  ALB:                ${aws_lb.api.dns_name}
+  SPA bucket:         ${aws_s3_bucket.spa.bucket}
 
-2. Create the two application databases on RDS:
-     kubectl create ns ${local.namespace} 2>$null
-     kubectl run sqlcmd-init --rm -i --restart=Never --image=mcr.microsoft.com/mssql-tools -n ${local.namespace} -- \
-       /opt/mssql-tools/bin/sqlcmd -S ${aws_db_instance.sqlserver.address} -U ${var.rds_admin_username} -P '<your password>' \
-       -Q "IF DB_ID('UserServiceDB') IS NULL CREATE DATABASE UserServiceDB; IF DB_ID('ProductServiceDB') IS NULL CREATE DATABASE ProductServiceDB;"
+Manual finishing steps:
 
-3. Substitute IRSA ARNs into the k8s service account manifests:
-     # In k8s/serviceaccount-user.yaml replace PLACEHOLDER_EKS_SECRETS_READER_ROLE_ARN with:
-     #   ${aws_iam_role.user_service_irsa.arn}
-     # In k8s/serviceaccount-product.yaml replace with:
-     #   ${aws_iam_role.product_service_irsa.arn}
+1. Create the two application databases on RDS (one-shot ECS task):
+   The dotnet apps create their own tables via EnsureCreated(), but the
+   databases themselves need to exist first. Run:
 
-4. Set these GitHub repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+     aws rds describe-db-instances --db-instance-identifier angular-micro-postgres \
+       --region ${var.aws_region}
+
+   Then connect via your favorite psql client and:
+     CREATE DATABASE userservicedb;
+     CREATE DATABASE productservicedb;
+
+   (Or just push to main — the next CI run will trigger the apps which
+   will sit retrying until the DBs exist.)
+
+2. Set these GitHub repo variables (Settings -> Secrets and variables -> Actions -> Variables):
      AWS_ACCOUNT_ID = ${local.account_id}
      CLOUDFRONT_DISTRIBUTION_ID = ${try(aws_cloudfront_distribution.spa[0].id, "<run second apply with skip_cloudfront=false>")}
 
-5. Push to main to trigger the first deploy.
+3. Push to main to trigger CI/CD: image builds -> ECR -> aws ecs update-service.
 
-6. After everything is running, visit:
+4. After everything is running, visit:
      ${try("https://${aws_cloudfront_distribution.spa[0].domain_name}/", "<CloudFront skipped on first apply — see infra/README.md>")}
 ================================================================
 EOT

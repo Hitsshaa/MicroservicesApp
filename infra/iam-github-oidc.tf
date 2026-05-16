@@ -63,10 +63,22 @@ data "aws_iam_policy_document" "gh_actions_deployer" {
   }
 
   statement {
-    sid       = "EKSDescribe"
-    effect    = "Allow"
-    actions   = ["eks:DescribeCluster", "eks:ListClusters"]
-    resources = [module.eks.cluster_arn]
+    sid    = "ECSDeploy"
+    effect = "Allow"
+    actions = [
+      "ecs:DescribeServices",
+      "ecs:DescribeTasks",
+      "ecs:DescribeTaskDefinition",
+      "ecs:ListServices",
+      "ecs:ListTasks",
+      "ecs:UpdateService"
+    ]
+    resources = [
+      aws_ecs_cluster.this.arn,
+      "arn:${local.partition}:ecs:${var.aws_region}:${local.account_id}:service/${local.cluster_name}/*",
+      "arn:${local.partition}:ecs:${var.aws_region}:${local.account_id}:task/${local.cluster_name}/*",
+      "arn:${local.partition}:ecs:${var.aws_region}:${local.account_id}:task-definition/*"
+    ]
   }
 
   statement {

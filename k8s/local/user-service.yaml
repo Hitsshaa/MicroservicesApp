@@ -13,15 +13,15 @@ spec:
       labels:
         app: user-service
     spec:
-      serviceAccountName: user-service-sa
       containers:
         - name: user-service
-          image: PLACEHOLDER_ECR_URI/angular-microservices/user-service:latest
+          image: angular-micro/user-service:local
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5100
           env:
             - name: ASPNETCORE_ENVIRONMENT
-              value: "Production"
+              value: "Development"
             - name: ASPNETCORE_URLS
               value: "http://+:5100"
             - name: ConnectionStrings__DefaultConnection
@@ -29,10 +29,6 @@ spec:
                 secretKeyRef:
                   name: user-service-db
                   key: connection-string
-          volumeMounts:
-            - name: db-secret
-              mountPath: /mnt/secrets-store
-              readOnly: true
           readinessProbe:
             httpGet:
               path: /health
@@ -45,13 +41,6 @@ spec:
               port: 5100
             initialDelaySeconds: 30
             periodSeconds: 20
-      volumes:
-        - name: db-secret
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: user-service-db
 ---
 apiVersion: v1
 kind: Service

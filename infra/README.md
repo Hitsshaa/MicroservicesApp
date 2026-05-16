@@ -1,97 +1,97 @@
-# Terraform Infrastructure
+# Terraform Infrastructure — Free-Tier ECS Fargate
 
-Single-command provisioning of the full AWS stack: VPC, EKS, RDS SQL Server,
-ECR repos, Secrets Manager, S3 + CloudFront, IAM (OIDC + IRSA), and the
-required Helm releases (AWS Load Balancer Controller, Secrets Store CSI).
+Single-command provisioning of the full AWS stack using free-tier-friendly
+services: VPC (no NAT Gateway), ECS Fargate (Spot), RDS PostgreSQL on
+db.t3.micro, ECR, Secrets Manager, S3 + CloudFront, IAM (OIDC).
 
-The full design is in `docs/superpowers/specs/2026-05-16-aws-deployment-design.md`.
+The full design context is in
+`docs/superpowers/specs/2026-05-16-aws-deployment-design.md`.
 
 ## Files
 
 | File | What it provisions |
 |---|---|
-| `main.tf` | Provider versions, AWS/kubernetes/helm providers, locals |
-| `variables.tf` | Inputs (region, GitHub repo, DB password, sizes) |
-| `outputs.tf` | ARNs, endpoints, IDs, next-steps instructions |
-| `network.tf` | VPC module (public + private subnets, single NAT) |
-| `eks.tf` | EKS module + managed node group + addons + access entry for the deployer role |
-| `ecr.tf` | 3 ECR repositories with keep-last-10 lifecycle policies |
-| `rds.tf` | SQL Server Express, security group, subnet group |
-| `secrets.tf` | Two Secrets Manager secrets, populated with connection strings |
-| `s3-cloudfront.tf` | SPA bucket (private, OAC-only), CloudFront distribution with two origins |
-| `iam-github-oidc.tf` | GitHub OIDC provider + `gh-actions-deployer` role + permissions |
-| `irsa.tf` | Per-pod IRSA roles (one per application, scoped to one secret each) |
-| `helm.tf` | AWS Load Balancer Controller + Secrets Store CSI driver + AWS provider |
+| `main.tf` | Providers, locals, region |
+| `variables.tf` | Inputs (region, GitHub repo, DB password, Fargate sizing) |
+| `outputs.tf` | ARNs, endpoints, IDs, and a printed next-steps block |
+| `network.tf` | VPC (2 AZs, **public subnets only — no NAT**) + ALB SG + tasks SG |
+| `alb.tf` | Application Load Balancer + target group + listener |
+| `ecs.tf` | ECS cluster, capacity providers, Cloud Map service discovery, task defs, three services, IAM roles |
+| `ecr.tf` | 3 ECR repos with keep-last-10 lifecycle policies |
+| `rds.tf` | PostgreSQL 16 on db.t3.micro (free tier eligible) |
+| `secrets.tf` | Two Secrets Manager secrets, one per service |
+| `s3-cloudfront.tf` | SPA bucket (private, OAC-only), CloudFront with two origins |
+| `iam-github-oidc.tf` | GitHub OIDC provider + `gh-actions-deployer` role + ECS deploy permissions |
+
+## Cost while running
+
+| Resource | Approx |
+|---|---|
+| ECS Fargate (Spot, .25 vCPU × 3) | ~$5/mo if 24/7 |
+| RDS db.t3.micro PostgreSQL | **$0** (free tier, 750 hrs/mo for 12 months) |
+| ALB | ~$18/mo |
+| S3 + CloudFront + ECR + Secrets Manager | < $1/mo (free tier) |
+| **Total** | **~$25/mo if 24/7, ~$0 when `service_desired_count = 0`** |
+
+Set `service_desired_count = 0` in `terraform.tfvars` to scale to zero between
+sessions — only the ALB ($18/mo) keeps a meter running.
+
+For a **true zero-cost idle**, run `terraform destroy` after each session.
 
 ## Prerequisites
 
-Already installed from the project bootstrap:
-
-```
-aws, kubectl, helm, jq, terraform >= 1.9
-```
-
-Install Terraform (Windows):
-
-```powershell
-winget install --id Hashicorp.Terraform -e
-# verify
-terraform version
-```
-
-You also need `aws configure` to have credentials with `AdministratorAccess`
-(or equivalent — VPC, EKS, RDS, IAM, S3, CloudFront, Secrets Manager).
+- Terraform >= 1.9 — `winget install --id Hashicorp.Terraform -e`
+- AWS CLI v2 with credentials configured (`aws configure`)
+- AWS account on the paid plan (Free Plan does not allow ECS / RDS — see the
+  "Complete account setup" message in the AWS console if you signed up recently)
 
 ## Two-phase apply
 
-The CloudFront distribution depends on an ALB DNS name that only exists
-*after* the `k8s/ingress-alb.yaml` Ingress is applied and the AWS Load
-Balancer Controller provisions the actual ALB. So we apply in two phases.
+CloudFront needs the ALB DNS name to exist before the distribution is created.
+So we apply in two phases.
 
 ### Phase 1 — everything except CloudFront
 
 ```powershell
 cd infra
-cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars and set rds_admin_password to a strong password
+Copy-Item terraform.tfvars.example terraform.tfvars
+# Edit terraform.tfvars: set rds_admin_password to a real strong password
+
 terraform init
 terraform apply -var skip_cloudfront=true -auto-approve
 ```
 
-Takes ~25 minutes (EKS + RDS dominate).
+Takes ~10 minutes (RDS is the slowest part).
 
-### Between phases — bring up the app
+### Between phases — create application databases
+
+The .NET services create their own tables on startup (via
+`db.Database.EnsureCreated()`) but the *databases themselves* need to exist
+first. Easiest way: connect once with `psql` from the AWS CloudShell (the
+RDS instance has no public IP, so you need something inside the VPC or
+publicly_accessible turned on temporarily).
+
+Simplest for learning: temporarily flip the RDS to publicly accessible:
 
 ```powershell
-# 1. Update kubeconfig
-aws eks update-kubeconfig --name angular-micro-eks --region us-east-1
+$rds = terraform output -raw rds_endpoint
+$awsRegion = terraform output -raw aws_region
 
-# 2. Create the two application databases on RDS (one-shot kubectl pod)
-$RdsEndpoint = terraform output -raw rds_endpoint
-$Pwd = (Select-String '^rds_admin_password' terraform.tfvars).Line -replace '.*=\s*"(.*)"','$1'
-kubectl create ns angular-micro 2>$null
-kubectl run sqlcmd-init --rm -i --restart=Never `
-  --image=mcr.microsoft.com/mssql-tools -n angular-micro -- `
-  /opt/mssql-tools/bin/sqlcmd -S $RdsEndpoint -U sqladmin -P "$Pwd" `
-  -Q "IF DB_ID('UserServiceDB') IS NULL CREATE DATABASE UserServiceDB; IF DB_ID('ProductServiceDB') IS NULL CREATE DATABASE ProductServiceDB;"
+aws rds modify-db-instance --db-instance-identifier angular-micro-postgres `
+  --publicly-accessible --apply-immediately --region $awsRegion
 
-# 3. Substitute IRSA ARNs into the service account manifests
-$UserIrsa = terraform output -raw user_service_irsa_role_arn
-$ProductIrsa = terraform output -raw product_service_irsa_role_arn
-(Get-Content ..\k8s\serviceaccount-user.yaml).Replace('PLACEHOLDER_EKS_SECRETS_READER_ROLE_ARN', $UserIrsa) | Set-Content ..\k8s\serviceaccount-user.yaml
-(Get-Content ..\k8s\serviceaccount-product.yaml).Replace('PLACEHOLDER_EKS_SECRETS_READER_ROLE_ARN', $ProductIrsa) | Set-Content ..\k8s\serviceaccount-product.yaml
+# wait ~1 minute for the change to propagate, then connect
+$pw = (Select-String '^rds_admin_password' terraform.tfvars).Line -replace '.*=\s*"(.*)"','$1'
+$env:PGPASSWORD = $pw
+psql -h $rds -U postgres -d appdb -c "CREATE DATABASE userservicedb; CREATE DATABASE productservicedb;"
 
-# 4. Apply the k8s manifests (this is what CI normally does, but we do it
-#    once here so the Ingress creates the ALB before phase 2)
-$Registry = terraform output -raw ecr_registry_url
-(Get-ChildItem ..\k8s -Filter *.yaml).FullName | ForEach-Object {
-  (Get-Content $_).Replace('PLACEHOLDER_ECR_URI', $Registry) | Set-Content $_
-}
-kubectl apply -f ..\k8s\
-
-# 5. Wait for the ALB to be provisioned (~2-3 min)
-kubectl wait ingress/api-gateway-ingress -n angular-micro --for=jsonpath='{.status.loadBalancer.ingress[0].hostname}' --timeout=300s
+# turn public access back off
+aws rds modify-db-instance --db-instance-identifier angular-micro-postgres `
+  --no-publicly-accessible --apply-immediately --region $awsRegion
 ```
+
+(Don't have psql installed? Use the AWS Console's RDS Query Editor, or
+`docker run --rm -it postgres:16-alpine psql ...`.)
 
 ### Phase 2 — CloudFront
 
@@ -99,51 +99,46 @@ kubectl wait ingress/api-gateway-ingress -n angular-micro --for=jsonpath='{.stat
 terraform apply -var skip_cloudfront=false -auto-approve
 ```
 
-Takes ~10 minutes (CloudFront takes most of that).
+Takes ~10 minutes.
 
 ### After phase 2
 
-`terraform output` prints `next_steps` with the remaining manual bits:
-
-- Set GitHub repo variables `AWS_ACCOUNT_ID` and `CLOUDFRONT_DISTRIBUTION_ID`
-- Commit the IRSA ARN substitution in `k8s/serviceaccount-*.yaml`
-- Push to `main` to trigger CI/CD (which will now redeploy on every commit)
-- Browse to the CloudFront domain
+`terraform output` prints `next_steps`. Set the two GitHub repo variables and
+push to `main`.
 
 ## Verifying
 
 ```powershell
-kubectl get pods -n angular-micro              # all Running
-kubectl logs -n angular-micro deploy/user-service | Select-String migration
+# Service status
+aws ecs describe-services --cluster angular-micro --services api-gateway user-service product-service --query 'services[].[serviceName,desiredCount,runningCount]' --output table
 
-$Cf = terraform output -raw cloudfront_domain_name
-curl https://$Cf/api/users          # 3 seeded users
-curl https://$Cf/api/products       # 5 seeded products
-start https://$Cf/                  # opens browser
+# Hit the ALB directly
+$alb = terraform output -raw alb_dns_name
+curl "http://$alb/health"
+curl "http://$alb/api/users"
+curl "http://$alb/api/products"
+
+# Or via CloudFront
+$cf = terraform output -raw cloudfront_domain_name
+curl "https://$cf/api/users"
+start "https://$cf/"
 ```
 
-## Tearing down (run between learning sessions)
+## Tearing down
 
 ```powershell
 terraform destroy -auto-approve
 ```
 
-Takes ~15 minutes. Removes everything Terraform created (cluster, RDS, VPC,
-ECR with `force_destroy`, S3, CloudFront, IAM). If `terraform destroy` fails
-on the OIDC provider (because GitHub's thumbprint changed), delete it
-manually from the IAM console.
+Takes ~10 minutes.
 
-## Cost estimate (always-on, us-east-1)
+## Scaling to zero between sessions (cheaper than full teardown)
 
-| Resource | ~Monthly |
-|---|---|
-| EKS control plane | $73 |
-| 2 × t3.medium nodes | $60 |
-| NAT Gateway + data | $35 |
-| RDS db.t3.small SQL Server Express | $30 |
-| Application Load Balancer | $18 |
-| CloudFront + S3 + ECR + Secrets Manager | < $5 |
-| **Total if always-on** | **~$220** (~$8/day) |
+```powershell
+terraform apply -var service_desired_count=0 -auto-approve
+# ... later, bring tasks back ...
+terraform apply -var service_desired_count=1 -auto-approve
+```
 
-With disciplined `terraform destroy` between sessions, expected actual
-spend is single-digit dollars per month.
+While at 0, you pay only ALB ($18/mo) + the (free-tier) RDS instance.
+After teardown you pay $0.

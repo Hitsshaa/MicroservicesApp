@@ -5,12 +5,15 @@ aws_region        = "us-east-1"
 github_repository = "Hitsshaa/MicroservicesApp"
 github_branch     = "main"
 
-# Must be 8-128 chars and include upper, lower, digit, and symbol per SQL Server policy.
-rds_admin_username = "sqladmin"
+# Must be 8-128 chars. Postgres only requires "any printable ASCII", but using
+# mixed-case, digit, and symbol is good practice.
+rds_admin_username = "postgres"
 rds_admin_password = "ChangeMe_Strong_Password_1!"
 
 # Optional cost levers
-# node_instance_type        = "t3.medium"
-# node_desired_size         = 2
-# rds_instance_class        = "db.t3.small"
-# rds_allocated_storage_gb  = 20
+# rds_instance_class       = "db.t3.micro"   # free tier eligible
+# rds_allocated_storage_gb = 20
+# task_cpu                 = 256             # smallest Fargate (0.25 vCPU)
+# task_memory              = 512
+# use_fargate_spot         = true            # ~70% cheaper, can be interrupted
+# service_desired_count    = 1               # set to 0 between learning sessions

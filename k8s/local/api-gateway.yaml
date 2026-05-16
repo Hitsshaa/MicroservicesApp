@@ -15,26 +15,15 @@ spec:
     spec:
       containers:
         - name: api-gateway
-          image: PLACEHOLDER_ECR_URI/angular-microservices/api-gateway:latest
+          image: angular-micro/api-gateway:local
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 5000
           env:
             - name: ASPNETCORE_ENVIRONMENT
-              value: "Production"
+              value: "Development"
             - name: ASPNETCORE_URLS
               value: "http://+:5000"
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 5000
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 5000
-            initialDelaySeconds: 20
-            periodSeconds: 20
 ---
 apiVersion: v1
 kind: Service
@@ -42,9 +31,10 @@ metadata:
   name: api-gateway
   namespace: angular-micro
 spec:
-  type: ClusterIP
+  type: NodePort
   selector:
     app: api-gateway
   ports:
     - port: 5000
       targetPort: 5000
+      nodePort: 30500

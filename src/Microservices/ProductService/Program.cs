@@ -6,9 +6,9 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 var cs = builder.Configuration.GetConnectionString("DefaultConnection")
          ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection")
-         ?? "Server=sqlserver;Database=ProductServiceDB;User=sa;Password=Hitesh12@;TrustServerCertificate=True;";
+         ?? "Host=postgres;Port=5432;Database=productservicedb;Username=postgres;Password=postgres";
 
-builder.Services.AddDbContext<ProductDbContext>(o => o.UseSqlServer(cs));
+builder.Services.AddDbContext<ProductDbContext>(o => o.UseNpgsql(cs));
 builder.Services.AddScoped<IProductRepository, ProductRepository>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
@@ -20,39 +20,39 @@ builder.Services.AddHealthChecks().AddDbContextCheck<ProductDbContext>("db");
 builder.Services.AddCors(o => o.AddPolicy("allow-all", p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 var app = builder.Build();
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ProductDbContext>();
-    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Migrations");
-    
+    var logger = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Schema");
+
+    var retries = 10;
+    while (retries > 0)
+    {
+        try
+        {
+            db.Database.EnsureCreated();
+            logger.LogInformation("Database schema ready");
+            break;
+        }
+        catch (Exception ex)
+        {
+            retries--;
+            logger.LogWarning(ex, "Waiting for PostgreSQL... ({Retries} retries left)", retries);
+            Thread.Sleep(5000);
+        }
+    }
+
     try
     {
-        var retries = 10;
-        // Ensure database is created even if migrations are pending
-        while (retries > 0)
-        {
-            try
-            {
-                db.Database.Migrate();
-                break;
-            }
-            catch
-            {
-                retries--;
-                Console.WriteLine("Waiting for SQL Server...");
-                Thread.Sleep(5000);
-            }
-        }
-        logger.LogInformation("Database created or already exists");
-
-        // Seed the database
         await ProductDbSeeder.SeedAsync(db, logger);
     }
     catch (Exception ex)
     {
-        logger.LogError(ex, "An error occurred while initializing the database");
+        logger.LogError(ex, "Failed to seed database");
     }
 }
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

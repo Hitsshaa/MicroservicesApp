@@ -36,33 +36,23 @@ resource "aws_cloudfront_origin_access_control" "spa" {
 }
 
 # --------------------------------------------------------------------------
-# CloudFront distribution — two origins: S3 (default) and ALB (/api/*)
+# CloudFront distribution — two origins: S3 (default) and the ALB (/api/*)
 # --------------------------------------------------------------------------
-# Managed cache + origin request policy IDs from AWS docs
-# CachingOptimized:               658327ea-f89d-4fab-a63d-7e88639e58f6
-# CachingDisabled:                4135ea2d-6df8-44a3-9df3-4b5a84be39ad
-# AllViewerExceptHostHeader:      b689b0a8-53d0-40ab-baf2-68738e2966ac
+# Managed cache + origin request policy IDs from AWS docs:
+#   CachingOptimized:            658327ea-f89d-4fab-a63d-7e88639e58f6
+#   CachingDisabled:             4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+#   AllViewerExceptHostHeader:   b689b0a8-53d0-40ab-baf2-68738e2966ac
+#
+# Gated on skip_cloudfront so the first apply can defer CloudFront until
+# after the ALB exists (CloudFront errors out if the origin DNS isn't
+# resolvable yet — same two-phase approach as the EKS version).
 # --------------------------------------------------------------------------
-
-# Look up the ALB created by AWS Load Balancer Controller after the ingress is
-# applied. The data source is evaluated lazily — terraform apply will succeed
-# even though the ALB doesn't exist yet at plan time, IF you skip CloudFront
-# on first apply. We handle that with a -target ordering documented in
-# infra/README.md.
-data "aws_lb" "api" {
-  count = var.skip_cloudfront ? 0 : 1
-  tags = {
-    "ingress.k8s.aws/stack"        = "${local.namespace}/api-gateway-ingress"
-    "elbv2.k8s.aws/cluster"        = local.cluster_name
-  }
-}
-
 resource "aws_cloudfront_distribution" "spa" {
   count = var.skip_cloudfront ? 0 : 1
 
   enabled             = true
   is_ipv6_enabled     = true
-  comment             = "Angular SPA + /api/* proxy to EKS ALB"
+  comment             = "Angular SPA + /api/* proxy to ECS ALB"
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
 
@@ -74,7 +64,7 @@ resource "aws_cloudfront_distribution" "spa" {
 
   origin {
     origin_id   = "api-alb"
-    domain_name = data.aws_lb.api[0].dns_name
+    domain_name = aws_lb.api.dns_name
 
     custom_origin_config {
       http_port                = 80
@@ -92,7 +82,7 @@ resource "aws_cloudfront_distribution" "spa" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true
-    cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized
+    cache_policy_id        = "658327ea-f89d-4fab-a63d-7e88639e58f6"
   }
 
   ordered_cache_behavior {
@@ -102,8 +92,8 @@ resource "aws_cloudfront_distribution" "spa" {
     allowed_methods          = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods           = ["GET", "HEAD"]
     compress                 = true
-    cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
-    origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac" # AllViewerExceptHostHeader
+    cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+    origin_request_policy_id = "b689b0a8-53d0-40ab-baf2-68738e2966ac"
   }
 
   custom_error_response {
