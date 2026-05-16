@@ -13,34 +13,45 @@ spec:
       labels:
         app: user-service
     spec:
-      initContainers:
-      - name: wait-for-sql
-        image: mcr.microsoft.com/mssql-tools
-        command:
-          - /bin/sh
-          - -c
-          - |
-            echo "Waiting for SQL Server..."
-            until /opt/mssql-tools/bin/sqlcmd -S sqlserver -U sa -P 'Hitesh12@A' -Q "SELECT name FROM sys.databases WHERE name='UserServiceDB'" -h -1 | grep UserServiceDB
-            do
-              echo -n "."
-              sleep 5
-            done
+      serviceAccountName: user-service-sa
       containers:
-      - name: user-service
-        image: ghcr.io/hitsshaa/microservicesapp/user-service:latest
-        ports:
-        - containerPort: 5100
-        env:
-        - name: ASPNETCORE_ENVIRONMENT
-          value: "Development"
-        - name: ASPNETCORE_URLS
-          value: "http://+:5100"
-        - name: ConnectionStrings__DefaultConnection
-          valueFrom:
-            secretKeyRef:
-              name: user-service-secret
-              key: connection-string
+        - name: user-service
+          image: PLACEHOLDER_ECR_URI/angular-microservices/user-service:latest
+          ports:
+            - containerPort: 5100
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: ASPNETCORE_URLS
+              value: "http://+:5100"
+            - name: ConnectionStrings__DefaultConnection
+              valueFrom:
+                secretKeyRef:
+                  name: user-service-db
+                  key: connection-string
+          volumeMounts:
+            - name: db-secret
+              mountPath: /mnt/secrets-store
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5100
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5100
+            initialDelaySeconds: 30
+            periodSeconds: 20
+      volumes:
+        - name: db-secret
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: user-service-db
 ---
 apiVersion: v1
 kind: Service
@@ -52,5 +63,5 @@ spec:
   selector:
     app: user-service
   ports:
-  - port: 5100
-    targetPort: 5100
+    - port: 5100
+      targetPort: 5100

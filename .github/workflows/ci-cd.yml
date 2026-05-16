@@ -10,6 +10,16 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  AWS_REGION: us-east-1
+  EKS_CLUSTER: angular-micro-eks
+  EKS_NAMESPACE: angular-micro
+  ECR_NAMESPACE: angular-microservices
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -42,64 +52,109 @@ jobs:
       - name: Lint
         working-directory: src/ClientApp
         run: npm run lint --if-present
-      - name: Build
+      - name: Build (verification)
         working-directory: src/ClientApp
         run: npm run build -- --configuration production
+      - name: Upload Angular build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: angular-dist
+          path: src/ClientApp/dist/client-app/browser/
+          retention-days: 1
 
-  docker:
-    needs: [ backend, frontend ]
+  backend-deploy:
+    needs: backend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gh-actions-deployer
+          aws-region: ${{ env.AWS_REGION }}
 
-      # Create lowercase repository variable
-      - name: Set lowercase repository name
-        run: echo "REPO=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: |
-            ghcr.io/${{ env.REPO }}/api-gateway
-            ghcr.io/${{ env.REPO }}/user-service
-            ghcr.io/${{ env.REPO }}/product-service
-            ghcr.io/${{ env.REPO }}/angular-client
-
-      - name: Build & push API Gateway
+      - name: Build & push api-gateway
         uses: docker/build-push-action@v6
         with:
           context: ./src/ApiGateway
           push: true
-          tags: ghcr.io/${{ env.REPO }}/api-gateway:latest
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/api-gateway:latest
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/api-gateway:${{ github.sha }}
 
-      - name: Build & push User Service
+      - name: Build & push user-service
         uses: docker/build-push-action@v6
         with:
           context: ./src/Microservices/UserService
           push: true
-          tags: ghcr.io/${{ env.REPO }}/user-service:latest
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/user-service:latest
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/user-service:${{ github.sha }}
 
-      - name: Build & push Product Service
+      - name: Build & push product-service
         uses: docker/build-push-action@v6
         with:
           context: ./src/Microservices/ProductService
           push: true
-          tags: ghcr.io/${{ env.REPO }}/product-service:latest
+          tags: |
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/product-service:latest
+            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/product-service:${{ github.sha }}
 
-      - name: Build & push Angular Client
-        uses: docker/build-push-action@v6
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+      - name: Render image placeholders in manifests
+        run: |
+          REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          find k8s -type f -name '*.yaml' -print0 | xargs -0 sed -i "s|PLACEHOLDER_ECR_URI|${REGISTRY}|g"
+
+      - name: Apply manifests
+        run: kubectl apply -f k8s/
+
+      - name: Roll out new images
+        run: |
+          REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          for svc in api-gateway user-service product-service; do
+            kubectl set image deployment/${svc} \
+              ${svc}=${REGISTRY}/${{ env.ECR_NAMESPACE }}/${svc}:${{ github.sha }} \
+              -n ${{ env.EKS_NAMESPACE }}
+          done
+
+      - name: Wait for rollouts
+        run: |
+          for svc in api-gateway user-service product-service; do
+            kubectl rollout status deployment/${svc} -n ${{ env.EKS_NAMESPACE }} --timeout=5m
+          done
+
+  frontend-deploy:
+    needs: frontend
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          context: ./src/ClientApp
-          push: true
-          tags: ghcr.io/${{ env.REPO }}/angular-client:latest
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gh-actions-deployer
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Download Angular build
+        uses: actions/download-artifact@v4
+        with:
+          name: angular-dist
+          path: dist/
+
+      - name: Sync to S3
+        run: aws s3 sync dist/ s3://angular-micro-spa-${{ vars.AWS_ACCOUNT_ID }}/ --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths '/*'
