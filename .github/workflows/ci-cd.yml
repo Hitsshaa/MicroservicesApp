@@ -134,10 +134,13 @@ jobs:
 
       - name: Apply manifests (everything except the connection-string secrets)
         run: |
+          # Namespace MUST be applied first — other resources reference it.
+          kubectl apply -f k8s/gke/namespace.yaml
+
           # connection-strings.yaml has placeholders the next step replaces by
           # pulling real values from Secret Manager directly into kubectl, so
           # we deliberately skip it here.
-          for f in $(ls k8s/gke/*.yaml | grep -v connection-strings.yaml); do
+          for f in $(ls k8s/gke/*.yaml | grep -vE 'namespace\.yaml|connection-strings\.yaml'); do
             kubectl apply -f "$f"
           done
 
