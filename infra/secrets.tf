@@ -1,30 +1,37 @@
-# Each service's connection string is stored as a separate Secrets Manager
-# entry, and ECS task definitions reference them via the task-definition
-# `secrets` block (much simpler than the EKS Secrets Store CSI Driver was).
+# Connection strings stored in Secret Manager — pods access them via
+# Workload Identity (configured in iam-workload-identity.tf).
 
 locals {
-  user_db_connection_string    = "Host=${aws_db_instance.postgres.address};Port=5432;Database=userservicedb;Username=${var.rds_admin_username};Password=${var.rds_admin_password}"
-  product_db_connection_string = "Host=${aws_db_instance.postgres.address};Port=5432;Database=productservicedb;Username=${var.rds_admin_username};Password=${var.rds_admin_password}"
+  user_db_connection_string    = "Host=${google_sql_database_instance.postgres.private_ip_address};Port=5432;Database=userservicedb;Username=${var.cloudsql_admin_username};Password=${var.cloudsql_admin_password}"
+  product_db_connection_string = "Host=${google_sql_database_instance.postgres.private_ip_address};Port=5432;Database=productservicedb;Username=${var.cloudsql_admin_username};Password=${var.cloudsql_admin_password}"
 }
 
-resource "aws_secretsmanager_secret" "user_db" {
-  name                    = "angular-micro/user-service/db"
-  description             = "Connection string for the UserService database"
-  recovery_window_in_days = 0
+resource "google_secret_manager_secret" "user_db" {
+  secret_id = "angular-micro-user-service-db"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.apis]
 }
 
-resource "aws_secretsmanager_secret_version" "user_db" {
-  secret_id     = aws_secretsmanager_secret.user_db.id
-  secret_string = local.user_db_connection_string
+resource "google_secret_manager_secret_version" "user_db" {
+  secret      = google_secret_manager_secret.user_db.id
+  secret_data = local.user_db_connection_string
 }
 
-resource "aws_secretsmanager_secret" "product_db" {
-  name                    = "angular-micro/product-service/db"
-  description             = "Connection string for the ProductService database"
-  recovery_window_in_days = 0
+resource "google_secret_manager_secret" "product_db" {
+  secret_id = "angular-micro-product-service-db"
+
+  replication {
+    auto {}
+  }
+
+  depends_on = [google_project_service.apis]
 }
 
-resource "aws_secretsmanager_secret_version" "product_db" {
-  secret_id     = aws_secretsmanager_secret.product_db.id
-  secret_string = local.product_db_connection_string
+resource "google_secret_manager_secret_version" "product_db" {
+  secret      = google_secret_manager_secret.product_db.id
+  secret_data = local.product_db_connection_string
 }

@@ -1,0 +1,25 @@
+# In-cluster fallback secrets. The connection-string values are also stored
+# in GCP Secret Manager (see infra/secrets.tf). For full Secret Manager
+# integration with auto-rotation, install the
+# secrets-store-csi-driver-provider-gcp. For learning, we keep it simple
+# and let CI substitute the actual connection string into these Secret
+# resources after `terraform output`.
+#
+# CI replaces PLACEHOLDER_USER_CONN / PLACEHOLDER_PRODUCT_CONN at deploy time.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: user-service-db
+  namespace: angular-micro
+type: Opaque
+stringData:
+  connection-string: PLACEHOLDER_USER_CONN
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: product-service-db
+  namespace: angular-micro
+type: Opaque
+stringData:
+  connection-string: PLACEHOLDER_PRODUCT_CONN

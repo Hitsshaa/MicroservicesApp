@@ -1,19 +1,14 @@
 # Copy this file to terraform.tfvars and fill in the values.
 # terraform.tfvars is in .gitignore — never commit secrets.
 
-aws_region        = "us-east-1"
+gcp_project_id    = "your-project-id-here"
+gcp_region        = "us-central1"
 github_repository = "Hitsshaa/MicroservicesApp"
 github_branch     = "main"
 
-# Must be 8-128 chars. Postgres only requires "any printable ASCII", but using
-# mixed-case, digit, and symbol is good practice.
-rds_admin_username = "postgres"
-rds_admin_password = "ChangeMe_Strong_Password_1!"
+cloudsql_admin_username = "postgres"
+cloudsql_admin_password = "ChangeMe_Strong_Password_1!"
 
 # Optional cost levers
-# rds_instance_class       = "db.t3.micro"   # free tier eligible
-# rds_allocated_storage_gb = 20
-# task_cpu                 = 256             # smallest Fargate (0.25 vCPU)
-# task_memory              = 512
-# use_fargate_spot         = true            # ~70% cheaper, can be interrupted
-# service_desired_count    = 1               # set to 0 between learning sessions
+# cloudsql_tier        = "db-f1-micro"
+# cloudsql_storage_gb  = 10

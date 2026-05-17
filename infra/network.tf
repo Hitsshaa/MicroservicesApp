@@ -1,79 +1,61 @@
-data "aws_availability_zones" "available" {
-  state = "available"
+resource "google_compute_network" "vpc" {
+  name                    = "${local.cluster_name}-vpc"
+  auto_create_subnetworks = false
+  routing_mode            = "REGIONAL"
+
+  depends_on = [google_project_service.apis]
 }
 
-locals {
-  azs            = slice(data.aws_availability_zones.available.names, 0, 2)
-  vpc_cidr       = "10.0.0.0/16"
-  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+resource "google_compute_subnetwork" "primary" {
+  name          = "${local.cluster_name}-subnet"
+  region        = var.gcp_region
+  network       = google_compute_network.vpc.id
+  ip_cidr_range = "10.10.0.0/16"
+
+  secondary_ip_range {
+    range_name    = "pods"
+    ip_cidr_range = "10.20.0.0/16"
+  }
+
+  secondary_ip_range {
+    range_name    = "services"
+    ip_cidr_range = "10.30.0.0/20"
+  }
+
+  private_ip_google_access = true
 }
 
-# Free-tier-friendly VPC: public subnets only, no NAT Gateway.
-# Fargate tasks get public IPs and reach the internet through the IGW.
-# This is acceptable for a learning environment; production would use
-# private subnets + NAT, accepting the $35/mo NAT charge.
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.13"
-
-  name = "${local.cluster_name}-vpc"
-  cidr = local.vpc_cidr
-  azs  = local.azs
-
-  public_subnets       = local.public_subnets
-  enable_nat_gateway   = false
-  enable_dns_hostnames = true
-  enable_dns_support   = true
+# Reserve a /16 inside our VPC for the Google-managed Cloud SQL instance.
+resource "google_compute_global_address" "cloudsql_private_ip" {
+  name          = "${local.cluster_name}-cloudsql-private-ip"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc.id
 }
 
-# Application Load Balancer SG — open 80 to the world
-resource "aws_security_group" "alb" {
-  name        = "${local.cluster_name}-alb-sg"
-  description = "Public ALB"
-  vpc_id      = module.vpc.vpc_id
+# Peer our VPC with Google's services VPC so Cloud SQL can sit on the
+# private IP we just reserved.
+resource "google_service_networking_connection" "private_vpc" {
+  network                 = google_compute_network.vpc.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.cloudsql_private_ip.name]
+
+  depends_on = [google_project_service.apis]
 }
 
-resource "aws_vpc_security_group_ingress_rule" "alb_http_v4" {
-  security_group_id = aws_security_group.alb.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "tcp"
-  from_port         = 80
-  to_port           = 80
+# Cloud NAT — GKE Autopilot nodes go into private subnets and need outbound
+# internet for pulling images, calling APIs, etc.
+resource "google_compute_router" "router" {
+  name    = "${local.cluster_name}-router"
+  region  = var.gcp_region
+  network = google_compute_network.vpc.id
 }
 
-resource "aws_vpc_security_group_egress_rule" "alb_egress" {
-  security_group_id = aws_security_group.alb.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
-}
-
-# Tasks SG — only ALB can hit the gateway; services can talk to each other.
-resource "aws_security_group" "tasks" {
-  name        = "${local.cluster_name}-tasks-sg"
-  description = "ECS tasks"
-  vpc_id      = module.vpc.vpc_id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "tasks_from_alb" {
-  security_group_id            = aws_security_group.tasks.id
-  referenced_security_group_id = aws_security_group.alb.id
-  ip_protocol                  = "tcp"
-  from_port                    = 5000
-  to_port                      = 5000
-  description                  = "ALB to api-gateway"
-}
-
-resource "aws_vpc_security_group_ingress_rule" "tasks_intra" {
-  security_group_id            = aws_security_group.tasks.id
-  referenced_security_group_id = aws_security_group.tasks.id
-  ip_protocol                  = "tcp"
-  from_port                    = 0
-  to_port                      = 65535
-  description                  = "Inter-service traffic"
-}
-
-resource "aws_vpc_security_group_egress_rule" "tasks_egress" {
-  security_group_id = aws_security_group.tasks.id
-  cidr_ipv4         = "0.0.0.0/0"
-  ip_protocol       = "-1"
+resource "google_compute_router_nat" "nat" {
+  name                               = "${local.cluster_name}-nat"
+  router                             = google_compute_router.router.name
+  region                             = google_compute_router.router.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }

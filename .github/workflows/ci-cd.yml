@@ -11,13 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  AWS_REGION: us-east-1
-  ECS_CLUSTER: angular-micro
-  ECR_NAMESPACE: angular-microservices
+  GKE_CLUSTER: angular-micro
+  GKE_NAMESPACE: angular-micro
+  AR_REPO: angular-micro
 
 permissions:
   contents: read
-  id-token: write   # required for OIDC
+  id-token: write   # required for Workload Identity Federation
 
 jobs:
   backend:
@@ -54,30 +54,29 @@ jobs:
       - name: Build (verification)
         working-directory: src/ClientApp
         run: npm run build -- --configuration production
-      - name: Upload Angular build
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: angular-dist
-          path: src/ClientApp/dist/client-app/browser/
-          retention-days: 1
 
-  backend-deploy:
-    needs: backend
+  deploy:
+    needs: [backend, frontend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        id: gcp-auth
+        uses: google-github-actions/auth@v2
         with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gh-actions-deployer
-          aws-region: ${{ env.AWS_REGION }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
 
-      - name: Log in to Amazon ECR
-        id: ecr-login
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Define registry URL
+        run: echo "REGISTRY=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ env.AR_REPO }}" >> $GITHUB_ENV
 
       - name: Build & push api-gateway
         uses: docker/build-push-action@v6
@@ -85,8 +84,8 @@ jobs:
           context: ./src/ApiGateway
           push: true
           tags: |
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/api-gateway:latest
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/api-gateway:${{ github.sha }}
+            ${{ env.REGISTRY }}/api-gateway:latest
+            ${{ env.REGISTRY }}/api-gateway:${{ github.sha }}
 
       - name: Build & push user-service
         uses: docker/build-push-action@v6
@@ -94,8 +93,8 @@ jobs:
           context: ./src/Microservices/UserService
           push: true
           tags: |
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/user-service:latest
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/user-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/user-service:latest
+            ${{ env.REGISTRY }}/user-service:${{ github.sha }}
 
       - name: Build & push product-service
         uses: docker/build-push-action@v6
@@ -103,54 +102,46 @@ jobs:
           context: ./src/Microservices/ProductService
           push: true
           tags: |
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/product-service:latest
-            ${{ steps.ecr-login.outputs.registry }}/${{ env.ECR_NAMESPACE }}/product-service:${{ github.sha }}
+            ${{ env.REGISTRY }}/product-service:latest
+            ${{ env.REGISTRY }}/product-service:${{ github.sha }}
 
-      # ECS task defs reference `:latest`, so a force-new-deployment is enough
-      # to pull the freshly-pushed images. (To pin to immutable SHAs you'd
-      # register a new task definition revision per deploy — overkill for
-      # a learning project.)
-      - name: Force ECS service redeploy
+      - name: Build & push angular-client
+        uses: docker/build-push-action@v6
+        with:
+          context: ./src/ClientApp
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/angular-client:latest
+            ${{ env.REGISTRY }}/angular-client:${{ github.sha }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ vars.GCP_REGION }}
+
+      - name: Render placeholders in manifests
         run: |
-          for svc in api-gateway user-service product-service; do
-            aws ecs update-service \
-              --cluster ${{ env.ECS_CLUSTER }} \
-              --service $svc \
-              --force-new-deployment \
-              --region ${{ env.AWS_REGION }} \
-              --no-cli-pager
+          sed -i "s|PLACEHOLDER_REGISTRY|${{ env.REGISTRY }}|g" k8s/gke/*.yaml
+
+      - name: Apply manifests
+        run: kubectl apply -f k8s/gke/
+
+      - name: Force rollout to latest images
+        run: |
+          for svc in api-gateway user-service product-service angular-client; do
+            kubectl set image deployment/${svc} \
+              ${svc}=${{ env.REGISTRY }}/${svc}:${{ github.sha }} \
+              -n ${{ env.GKE_NAMESPACE }}
           done
 
-      - name: Wait for ECS rollouts to stabilize
+      - name: Wait for rollouts to stabilize
         run: |
-          aws ecs wait services-stable \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --services api-gateway user-service product-service \
-            --region ${{ env.AWS_REGION }}
+          for svc in api-gateway user-service product-service angular-client; do
+            kubectl rollout status deployment/${svc} -n ${{ env.GKE_NAMESPACE }} --timeout=5m
+          done
 
-  frontend-deploy:
-    needs: frontend
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/gh-actions-deployer
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Download Angular build
-        uses: actions/download-artifact@v4
-        with:
-          name: angular-dist
-          path: dist/
-
-      - name: Sync to S3
-        run: aws s3 sync dist/ s3://angular-micro-spa-${{ vars.AWS_ACCOUNT_ID }}/ --delete
-
-      - name: Invalidate CloudFront
-        if: vars.CLOUDFRONT_DISTRIBUTION_ID != ''
+      - name: Print public IP
         run: |
-          aws cloudfront create-invalidation \
-            --distribution-id ${{ vars.CLOUDFRONT_DISTRIBUTION_ID }} \
-            --paths '/*'
+          echo "Public IP (allocation may take 1-2 min on first deploy):"
+          kubectl get svc -n ${{ env.GKE_NAMESPACE }} angular-client -o wide

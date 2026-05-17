@@ -1,95 +1,88 @@
-output "aws_account_id" {
-  description = "AWS account ID — set this as a GitHub repo variable AWS_ACCOUNT_ID"
-  value       = local.account_id
+output "gcp_project_id" {
+  description = "GCP project ID"
+  value       = var.gcp_project_id
 }
 
-output "aws_region" {
+output "gcp_region" {
   description = "Region everything was deployed into"
-  value       = var.aws_region
+  value       = var.gcp_region
 }
 
-output "ecs_cluster_name" {
-  description = "ECS cluster name"
-  value       = aws_ecs_cluster.this.name
+output "gke_cluster_name" {
+  description = "GKE Autopilot cluster name"
+  value       = google_container_cluster.autopilot.name
 }
 
-output "ecr_registry_url" {
-  description = "ECR registry URL — used by GitHub Actions to push images"
-  value       = "${local.account_id}.dkr.ecr.${var.aws_region}.amazonaws.com"
+output "gke_cluster_endpoint" {
+  description = "GKE cluster endpoint (used by kubectl)"
+  value       = google_container_cluster.autopilot.endpoint
+  sensitive   = true
 }
 
-output "ecr_repository_urls" {
-  description = "Per-service ECR repository URLs"
-  value       = { for k, v in aws_ecr_repository.app : k => v.repository_url }
+output "artifact_registry_url" {
+  description = "Docker registry URL — used by GitHub Actions to push images"
+  value       = "${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.app.repository_id}"
 }
 
-output "rds_endpoint" {
-  description = "RDS Postgres endpoint hostname"
-  value       = aws_db_instance.postgres.address
+output "cloudsql_private_ip" {
+  description = "Private IP of the Cloud SQL Postgres instance"
+  value       = google_sql_database_instance.postgres.private_ip_address
 }
 
-output "alb_dns_name" {
-  description = "ALB DNS name (the api-gateway entrypoint)"
-  value       = aws_lb.api.dns_name
+output "github_workload_identity_provider" {
+  description = "Provider name for google-github-actions/auth (set as GitHub repo variable WIF_PROVIDER)"
+  value       = google_iam_workload_identity_pool_provider.github.name
 }
 
-output "spa_bucket_name" {
-  description = "S3 bucket holding the Angular SPA"
-  value       = aws_s3_bucket.spa.bucket
+output "github_deployer_service_account_email" {
+  description = "Service account email GitHub Actions impersonates (set as GitHub repo variable WIF_SERVICE_ACCOUNT)"
+  value       = google_service_account.github_deployer.email
 }
 
-output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID — set this as a GitHub repo variable CLOUDFRONT_DISTRIBUTION_ID"
-  value       = try(aws_cloudfront_distribution.spa[0].id, null)
+output "user_service_gsa_email" {
+  description = "GCP service account email for user-service pods (annotate the K8s SA with this)"
+  value       = google_service_account.user_service.email
 }
 
-output "cloudfront_domain_name" {
-  description = "CloudFront *.cloudfront.net domain — open this in a browser after deploy"
-  value       = try(aws_cloudfront_distribution.spa[0].domain_name, null)
-}
-
-output "gh_actions_deployer_role_arn" {
-  description = "Role ARN GitHub Actions assumes via OIDC"
-  value       = aws_iam_role.gh_actions_deployer.arn
+output "product_service_gsa_email" {
+  description = "GCP service account email for product-service pods (annotate the K8s SA with this)"
+  value       = google_service_account.product_service.email
 }
 
 output "next_steps" {
-  description = "What to do after terraform apply succeeds"
+  description = "What to do after terraform apply"
   value       = <<EOT
 
 ================================================================
 Terraform apply complete.
 
 Resources:
-  ECS cluster:        ${aws_ecs_cluster.this.name}
-  RDS endpoint:       ${aws_db_instance.postgres.address}
-  ALB:                ${aws_lb.api.dns_name}
-  SPA bucket:         ${aws_s3_bucket.spa.bucket}
+  GKE cluster:         ${google_container_cluster.autopilot.name}
+  Cloud SQL endpoint:  ${google_sql_database_instance.postgres.private_ip_address}
+  Artifact Registry:   ${var.gcp_region}-docker.pkg.dev/${var.gcp_project_id}/${google_artifact_registry_repository.app.repository_id}
 
 Manual finishing steps:
 
-1. Create the two application databases on RDS (one-shot ECS task):
-   The dotnet apps create their own tables via EnsureCreated(), but the
-   databases themselves need to exist first. Run:
+1. Wire kubectl to the new cluster:
+     gcloud container clusters get-credentials ${google_container_cluster.autopilot.name} --region ${var.gcp_region} --project ${var.gcp_project_id}
 
-     aws rds describe-db-instances --db-instance-identifier angular-micro-postgres \
-       --region ${var.aws_region}
+2. Apply the K8s manifests (substituting the GSA emails into the service accounts):
+     $UserGsa    = "${google_service_account.user_service.email}"
+     $ProductGsa = "${google_service_account.product_service.email}"
+     (Get-Content ..\k8s\gke\serviceaccount-user.yaml).Replace('PLACEHOLDER_USER_GSA', $UserGsa)       | Set-Content ..\k8s\gke\serviceaccount-user.yaml
+     (Get-Content ..\k8s\gke\serviceaccount-product.yaml).Replace('PLACEHOLDER_PRODUCT_GSA', $ProductGsa) | Set-Content ..\k8s\gke\serviceaccount-product.yaml
+     kubectl apply -f ..\k8s\gke\
 
-   Then connect via your favorite psql client and:
-     CREATE DATABASE userservicedb;
-     CREATE DATABASE productservicedb;
+3. Set these GitHub repo variables (Settings -> Secrets and variables -> Actions -> Variables):
+     GCP_PROJECT_ID       = ${var.gcp_project_id}
+     GCP_REGION           = ${var.gcp_region}
+     WIF_PROVIDER         = ${google_iam_workload_identity_pool_provider.github.name}
+     WIF_SERVICE_ACCOUNT  = ${google_service_account.github_deployer.email}
 
-   (Or just push to main — the next CI run will trigger the apps which
-   will sit retrying until the DBs exist.)
+4. Push to main to trigger CI/CD (build -> push to Artifact Registry -> kubectl rollout).
 
-2. Set these GitHub repo variables (Settings -> Secrets and variables -> Actions -> Variables):
-     AWS_ACCOUNT_ID = ${local.account_id}
-     CLOUDFRONT_DISTRIBUTION_ID = ${try(aws_cloudfront_distribution.spa[0].id, "<run second apply with skip_cloudfront=false>")}
-
-3. Push to main to trigger CI/CD: image builds -> ECR -> aws ecs update-service.
-
-4. After everything is running, visit:
-     ${try("https://${aws_cloudfront_distribution.spa[0].domain_name}/", "<CloudFront skipped on first apply — see infra/README.md>")}
+5. Get the public IP of the gateway and visit it:
+     kubectl get svc -n ${local.namespace} angular-client -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ================================================================
 EOT
 }

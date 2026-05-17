@@ -2,46 +2,65 @@ terraform {
   required_version = ">= 1.9.0"
 
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.70"
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.10"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 6.10"
     }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
-    tls = {
-      source  = "hashicorp/tls"
-      version = "~> 4.0"
-    }
   }
 }
 
-provider "aws" {
-  region = var.aws_region
-
-  default_tags {
-    tags = {
-      Project     = "angular-micro"
-      Environment = "learning"
-      ManagedBy   = "terraform"
-    }
-  }
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_partition" "current" {}
+provider "google-beta" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+}
 
 locals {
-  account_id    = data.aws_caller_identity.current.account_id
-  partition     = data.aws_partition.current.partition
-  cluster_name  = "angular-micro"
+  cluster_name = "angular-micro"
+  namespace    = "angular-micro"
 
-  ecr_services  = ["api-gateway", "user-service", "product-service"]
+  app_services = ["api-gateway", "user-service", "product-service", "angular-client"]
+
+  # The .NET services that need a DB connection (api-gateway and angular-client don't)
+  db_services = ["user-service", "product-service"]
 
   service_ports = {
     api-gateway     = 5000
     user-service    = 5100
     product-service = 5200
+    angular-client  = 80
   }
+
+  required_apis = [
+    "compute.googleapis.com",
+    "container.googleapis.com",
+    "sqladmin.googleapis.com",
+    "secretmanager.googleapis.com",
+    "artifactregistry.googleapis.com",
+    "iamcredentials.googleapis.com",
+    "iam.googleapis.com",
+    "servicenetworking.googleapis.com",
+    "cloudresourcemanager.googleapis.com",
+  ]
+}
+
+# Enable the GCP APIs we need. project_services keeps Terraform in charge.
+resource "google_project_service" "apis" {
+  for_each = toset(local.required_apis)
+
+  project            = var.gcp_project_id
+  service            = each.value
+  disable_on_destroy = false
 }

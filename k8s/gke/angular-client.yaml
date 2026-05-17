@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: angular-client
+  namespace: angular-micro
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: angular-client
+  template:
+    metadata:
+      labels:
+        app: angular-client
+    spec:
+      containers:
+        - name: angular-client
+          image: PLACEHOLDER_REGISTRY/angular-client:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 30
+---
+# LoadBalancer exposes the angular-client (nginx) to the public internet.
+# nginx is configured (via the existing nginx.conf in src/ClientApp/) to
+# proxy /api/* to api-gateway:5000 in-cluster. So a single public IP
+# serves both the SPA and the API.
+apiVersion: v1
+kind: Service
+metadata:
+  name: angular-client
+  namespace: angular-micro
+spec:
+  type: LoadBalancer
+  selector:
+    app: angular-client
+  ports:
+    - port: 80
+      targetPort: 80
