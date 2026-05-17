@@ -14,6 +14,10 @@ env:
   GKE_CLUSTER: angular-micro
   GKE_NAMESPACE: angular-micro
   AR_REPO: angular-micro
+  GCP_PROJECT_ID: angular-micro
+  GCP_REGION: us-central1
+  WIF_PROVIDER: projects/1047441382714/locations/global/workloadIdentityPools/github-actions-pool/providers/github-provider
+  WIF_SERVICE_ACCOUNT: github-deployer@angular-micro.iam.gserviceaccount.com
 
 permissions:
   contents: read
@@ -62,38 +66,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: DEBUG — print OIDC claims and WIF vars
-        run: |
-          echo "=== Repo variables seen by this run ==="
-          echo "GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}"
-          echo "GCP_REGION=${{ vars.GCP_REGION }}"
-          echo "WIF_PROVIDER=${{ vars.WIF_PROVIDER }}"
-          echo "WIF_SERVICE_ACCOUNT=${{ vars.WIF_SERVICE_ACCOUNT }}"
-          echo ""
-          echo "=== Fetching OIDC token claims ==="
-          OIDC_TOKEN=$(curl -sLS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://iam.googleapis.com/${{ vars.WIF_PROVIDER }}" | jq -r '.value')
-          echo "Token length: ${#OIDC_TOKEN}"
-          PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d. -f2)
-          # base64 url-safe → standard, pad
-          PAYLOAD=$(printf '%s' "$PAYLOAD" | tr '_-' '/+')
-          while [ $((${#PAYLOAD} % 4)) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
-          echo "$PAYLOAD" | base64 -d 2>/dev/null | jq '{repository, repository_owner, ref, sub, aud, iss}'
-
       - name: Authenticate to Google Cloud (Workload Identity Federation)
         id: gcp-auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
 
       - name: Define registry URL
-        run: echo "REGISTRY=${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ env.AR_REPO }}" >> $GITHUB_ENV
+        run: echo "REGISTRY=${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}" >> $GITHUB_ENV
 
       - name: Build & push api-gateway
         uses: docker/build-push-action@v6
@@ -135,12 +122,12 @@ jobs:
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ vars.GCP_REGION }}
+          location: ${{ env.GCP_REGION }}
 
       - name: Render placeholders in manifests
         run: |
-          USER_GSA="angular-micro-user-svc@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
-          PRODUCT_GSA="angular-micro-product-svc@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
+          USER_GSA="angular-micro-user-svc@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
+          PRODUCT_GSA="angular-micro-product-svc@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com"
           sed -i "s|PLACEHOLDER_REGISTRY|${{ env.REGISTRY }}|g" k8s/gke/*.yaml
           sed -i "s|PLACEHOLDER_USER_GSA|${USER_GSA}|g"        k8s/gke/serviceaccount-user.yaml
           sed -i "s|PLACEHOLDER_PRODUCT_GSA|${PRODUCT_GSA}|g"  k8s/gke/serviceaccount-product.yaml
@@ -156,8 +143,8 @@ jobs:
 
       - name: Sync connection-string Secrets from GCP Secret Manager
         run: |
-          USER_CONN=$(gcloud secrets versions access latest --secret=angular-micro-user-service-db --project=${{ vars.GCP_PROJECT_ID }})
-          PROD_CONN=$(gcloud secrets versions access latest --secret=angular-micro-product-service-db --project=${{ vars.GCP_PROJECT_ID }})
+          USER_CONN=$(gcloud secrets versions access latest --secret=angular-micro-user-service-db --project=${{ env.GCP_PROJECT_ID }})
+          PROD_CONN=$(gcloud secrets versions access latest --secret=angular-micro-product-service-db --project=${{ env.GCP_PROJECT_ID }})
           kubectl create secret generic user-service-db    -n ${{ env.GKE_NAMESPACE }} --from-literal=connection-string="$USER_CONN" --dry-run=client -o yaml | kubectl apply -f -
           kubectl create secret generic product-service-db -n ${{ env.GKE_NAMESPACE }} --from-literal=connection-string="$PROD_CONN" --dry-run=client -o yaml | kubectl apply -f -
 
