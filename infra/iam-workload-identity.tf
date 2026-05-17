@@ -49,6 +49,7 @@ locals {
     "roles/artifactregistry.writer",      # push images
     "roles/container.developer",          # kubectl apply, set image, rollout
     "roles/storage.objectAdmin",          # SPA bucket sync (if we add CDN later)
+    "roles/secretmanager.secretAccessor", # read DB connection strings at deploy time
   ]
 }
 
@@ -94,10 +95,17 @@ resource "google_service_account_iam_member" "user_service_wi" {
   service_account_id = google_service_account.user_service.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.gcp_project_id}.svc.id.goog[${local.namespace}/user-service-sa]"
+
+  # The implicit <project>.svc.id.goog identity pool only becomes queryable
+  # after the GKE Autopilot cluster (which enables Workload Identity) finishes
+  # creating.
+  depends_on = [google_container_cluster.autopilot]
 }
 
 resource "google_service_account_iam_member" "product_service_wi" {
   service_account_id = google_service_account.product_service.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.gcp_project_id}.svc.id.goog[${local.namespace}/product-service-sa]"
+
+  depends_on = [google_container_cluster.autopilot]
 }
