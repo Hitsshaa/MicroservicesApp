@@ -22,7 +22,9 @@ resource "google_iam_workload_identity_pool_provider" "github" {
   }
 
   # Lock the pool to our specific repo so only this repo can mint tokens.
-  attribute_condition = "assertion.repository == \"${var.github_repository}\""
+  # Use the mapped `attribute.repository` form to stay consistent with the
+  # principalSet binding below.
+  attribute_condition = "attribute.repository == \"${var.github_repository}\""
 
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
