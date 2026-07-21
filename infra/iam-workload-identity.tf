@@ -64,6 +64,30 @@ resource "google_project_iam_member" "github_deployer" {
 }
 
 # --------------------------------------------------------------------------
+# GKE node identity — Autopilot nodes run as the default compute service
+# account, which on newer projects gets NO roles by default. Without
+# artifactregistry.reader the kubelet cannot pull our images (403 on the
+# pull token) and every pod sits in ImagePullBackOff.
+# --------------------------------------------------------------------------
+data "google_project" "current" {}
+
+locals {
+  gke_node_roles = [
+    "roles/artifactregistry.reader", # pull images from our registry
+    "roles/logging.logWriter",       # node/pod logs to Cloud Logging
+    "roles/monitoring.metricWriter", # node/pod metrics to Cloud Monitoring
+  ]
+}
+
+resource "google_project_iam_member" "gke_nodes" {
+  for_each = toset(local.gke_node_roles)
+
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${data.google_project.current.number}-compute@developer.gserviceaccount.com"
+}
+
+# --------------------------------------------------------------------------
 # Pod Workload Identity — lets pods read their per-service secret with NO
 # JSON keys. The K8s ServiceAccount (defined in k8s/gke/) gets annotated
 # with the GCP SA email; GKE auto-swaps the K8s SA token for a GCP token.
