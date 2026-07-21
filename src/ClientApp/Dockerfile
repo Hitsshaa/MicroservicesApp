@@ -29,6 +29,12 @@ COPY --from=build /app/dist/client-app/browser/ /usr/share/nginx/html/
 # with distribution-specific default files)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+# Startup hook: substitutes the container's real DNS server into the config
+# (the stock nginx entrypoint runs every executable file in /docker-entrypoint.d/).
+COPY 10-set-resolver.sh /docker-entrypoint.d/10-set-resolver.sh
+RUN chmod +x /docker-entrypoint.d/10-set-resolver.sh \
+    && sed -i 's/\r$//' /docker-entrypoint.d/10-set-resolver.sh
+
 # Expose port 80
 EXPOSE 80
 
