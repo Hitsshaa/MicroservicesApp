@@ -1,100 +1,162 @@
-# Angular .NET Microservices Platform
+# Angular + .NET Microservices on GKE
 
-A reference microservices architecture combining an Angular frontend, .NET 9 backend microservices, an API Gateway (Ocelot), containerization with Docker, orchestration with Kubernetes, and CI/CD via GitHub Actions & Azure Pipelines.
+A reference microservices application: an **Angular 20** single-page frontend, two independent **.NET 9** REST services behind a **YARP API Gateway**, backed by **PostgreSQL** (one database per service). It runs locally with Docker Compose and deploys to **Google Kubernetes Engine (GKE Autopilot)** through a fully automated, keyless GitHub Actions pipeline with infrastructure managed by **Terraform**.
 
-## High-Level Architecture
+It's intentionally small in features (users + products CRUD) but complete in the patterns that matter for real microservices: service-per-domain, database-per-service, an API gateway, container-first packaging, infrastructure as code, and zero long-lived credentials.
 
-- Client (Angular) communicates only with API Gateway.
-- API Gateway (Ocelot) routes to backend microservices.
-- Microservices: UserService & ProductService (clean architecture style: Controllers -> Application/Core -> Infrastructure/Data -> Domain models).
-- Shared project for cross-cutting code (DTOs, abstractions, messages, swagger conventions, etc.).
-- MSSQL for persistence per service (separate DBs) + optional Redis cache.
-- Central API Gateway only endpoint consumed by Angular (ports: Gateway 5000, User 5100, Product 5200).
-- Angular enhanced with models, error-handling interceptor, prod environment configuration.
-- Container-first design (each component has a Dockerfile; docker-compose for local; Kubernetes manifests in `k8s/`).
+---
 
-## Repository Layout
+## Architecture
 
 ```
-README.md
-azure-pipelines.yml
-.gitignore
-.github/
-  workflows/ci-cd.yml
-  ISSUE_TEMPLATE/
-  dependabot.yml
-  pull_request_template.md
-src/
-  ClientApp/ (Angular SPA)
-  ApiGateway/ (Ocelot gateway)
+Browser
+  │  GET /api/users            (relative path)
+  ▼
+┌─────────────────────────┐
+│  angular-client (nginx) │   serves the SPA + reverse-proxies /api/* 
+└───────────┬─────────────┘
+            │  http://api-gateway:5000/api/users
+            ▼
+┌─────────────────────────┐
+│  API Gateway (YARP)     │   single entry point; routes by path
+└─────┬─────────────┬─────┘
+      │             │
+      ▼             ▼
+┌───────────┐  ┌──────────────┐
+│UserService│  │ProductService│   independent .NET 9 services
+└─────┬─────┘  └──────┬───────┘
+      ▼               ▼
+ userservicedb   productservicedb   separate PostgreSQL databases
+```
+
+- The frontend only ever talks to **one origin** — nginx serves the SPA and proxies `/api/*` to the gateway, so there are no CORS concerns and a single public IP serves everything.
+- The gateway's routing table (the `ReverseProxy` section of `src/ApiGateway/appsettings.json`) maps `/api/users*` → `user-service:5100` and `/api/products*` → `product-service:5200`.
+- Each service owns its **own database** and knows nothing about the other — the core microservices tenet.
+
+## Tech stack
+
+| Layer | Technology |
+|-------|-----------|
+| Frontend | Angular 20, Angular Material, RxJS, nginx (serving + API proxy) |
+| API Gateway | .NET 9, YARP |
+| Services | .NET 9 Web API, EF Core 9, Swagger |
+| Database | PostgreSQL 16 (Cloud SQL in production) |
+| Containers | Docker (multi-stage builds) |
+| Orchestration | Kubernetes — GKE Autopilot (prod), kind (local) |
+| Infrastructure | Terraform (Google provider) |
+| CI/CD | GitHub Actions |
+| Cloud auth | Workload Identity Federation (no JSON keys anywhere) |
+
+## Ports
+
+| Component | Port |
+|-----------|------|
+| API Gateway | 5000 |
+| UserService | 5100 |
+| ProductService | 5200 |
+| Angular dev server | 4200 |
+
+---
+
+## Repository layout
+
+```
+src/                          The application (the part that runs)
+  ClientApp/                  Angular SPA + nginx Dockerfile + nginx.conf
+  ApiGateway/                 YARP gateway (routes in appsettings.json)
   Microservices/
-    UserService/
-    ProductService/
-  Shared/
+    UserService/              Users domain — controller, EF Core, own DB
+    ProductService/           Products domain — controller, EF Core, own DB
+  Shared/Common/              (placeholder for shared code)
+
+infra/                        Terraform — provisions all of GCP
+                              VPC, GKE, Cloud SQL, Artifact Registry,
+                              Secret Manager, IAM / Workload Identity
+
 k8s/
-  namespace.yaml
-  angular-client.yaml
-  user-service.yaml
-  product-service.yaml
-  ingress.yaml
-scripts/
-  deploy.sh
-  cleanup.sh
+  gke/                        Kubernetes manifests for production (GKE)
+  local/                      Kubernetes manifests for a local kind cluster
+
+.github/workflows/ci-cd.yml   Build → test → push images → deploy to GKE
+
+scripts/                      Local up/down helpers + Postgres seed
+docker-compose.yml            One-command local run (simplest path)
+start-services.{sh,bat}       Local convenience launchers
+DOCUMENTATION.md              Long-form architecture documentation
 ```
 
-## Quick Start (Docker Compose)
+---
+
+## Running locally
+
+### Option 1 — Docker Compose (simplest)
 
 ```bash
-# Build and run (Linux/macOS)
+# Linux/macOS
 ./start-services.sh
-
-# On Windows
+# Windows
 start-services.bat
 ```
 
-Then browse: `http://localhost:4200` (Angular) and `http://localhost:5000` (Gateway). Service Swagger UIs: `http://localhost:5100/swagger` (User), `http://localhost:5200/swagger`, aggregated via gateway (future enhancement).
+Then open **http://localhost:4200** for the app. The gateway is at `http://localhost:5000`, and each service exposes Swagger at `http://localhost:5100/swagger` (users) and `http://localhost:5200/swagger` (products).
 
-## Local Development (Without Docker)
-
-1. Start microservices & gateway:
-   ```bash
-   dotnet restore
-   dotnet run --project src/ApiGateway/ApiGateway.csproj
-   dotnet run --project src/Microservices/UserService/UserService.csproj
-   dotnet run --project src/Microservices/ProductService/ProductService.csproj
-   ```
-2. Start Angular client:
-   ```bash
-   cd src/ClientApp
-   npm install
-   npm start
-   ```
-3. Navigate to `http://localhost:4200`.
-
-## CI/CD
-- GitHub Actions (`.github/workflows/ci-cd.yml`): build, test, lint, docker build & push (conditional), Kubernetes dry-run.
-- Azure Pipelines (`azure-pipelines.yml`): optional alternative pipeline for Azure DevOps users.
-
-## Kubernetes Deployment
+### Option 2 — Run services directly (.NET + Angular)
 
 ```bash
-# Create namespace & deploy all manifests
-kubectl apply -f k8s/namespace.yaml
-kubectl apply -f k8s/
+# Backend (each in its own terminal)
+dotnet run --project src/ApiGateway/ApiGateway.csproj
+dotnet run --project src/Microservices/UserService/UserService.csproj
+dotnet run --project src/Microservices/ProductService/ProductService.csproj
 
-# Check resources
-kubectl get pods -n angular-micro
+# Frontend
+cd src/ClientApp
+npm install
+npm start          # http://localhost:4200
 ```
 
-## Scripts
-- `scripts/deploy.sh`: build & apply manifests (image tag param optional).
-- `scripts/cleanup.sh`: remove all deployed resources.
+> Local builds use `src/ClientApp/src/environments/environment.ts` (`apiUrl: http://api-gateway:5000/api`). Production builds swap in `environment.prod.ts` (`apiUrl: /api`) so the browser calls through the nginx proxy.
 
-## Next Enhancements
-- Add central authentication (e.g., IdentityServer / Keycloak / Azure AD B2C).
-- Observability stack (OpenTelemetry + Prometheus + Grafana + Loki).
-- Message broker (RabbitMQ / Kafka) for async integration.
-- Automated integration tests.
+---
+
+## Deploying to GCP
+
+Prerequisites: a GCP project with billing enabled, the `gcloud` CLI authenticated, and Terraform ≥ 1.9.
+
+```bash
+# 1. Provision all infrastructure (VPC, GKE, Cloud SQL, registry, IAM…)
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # fill in project id + DB password
+terraform init
+terraform apply
+
+# 2. Deploy the app — just push to main
+git push origin main
+```
+
+On push to `main`, GitHub Actions builds and tests everything, pushes four container images to Artifact Registry, and rolls them out to the GKE cluster. Get the public IP with:
+
+```bash
+kubectl get svc -n angular-micro angular-client
+```
+
+## How CI/CD works
+
+`.github/workflows/ci-cd.yml` runs three jobs on every push to `main`:
+
+1. **backend** — `dotnet restore/build/test` on the solution.
+2. **frontend** — `npm ci`, lint, and a production Angular build.
+3. **deploy** (main only, after 1 & 2 pass) — authenticates to GCP via **Workload Identity Federation** (no stored keys), builds & pushes the four Docker images, then `kubectl apply`s the manifests, syncs DB connection strings from Secret Manager, and rolls out the new images.
+
+Authentication is entirely keyless: GitHub Actions exchanges its OIDC token for short-lived GCP credentials, and each pod reads its database secret through its own GCP service account — no JSON key files exist anywhere in the pipeline or images.
+
+---
+
+## Project status & notes
+
+- Feature scope is deliberately minimal (users + products CRUD) to keep the architecture legible.
+- Production defaults favor low cost over resilience (single-zone Cloud SQL, no HA, public GKE endpoint) — harden these before any real use.
+- `src/Shared/Common/` and `tests/` are scaffolded placeholders for planned shared code and a test project.
 
 ## License
-MIT (adapt as needed).
+
+MIT — adapt as needed.

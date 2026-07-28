@@ -1,6 +1,6 @@
 # Angular .NET Microservices Platform — Technical Documentation
 
-A cloud-native reference architecture combining an Angular 20 SPA, .NET 9 microservices, an Ocelot API Gateway, SQL Server persistence, Docker, and Kubernetes — wired up with both GitHub Actions and Azure Pipelines CI/CD.
+A cloud-native reference architecture combining an Angular 20 SPA, .NET 9 microservices, a YARP API Gateway, SQL Server persistence, Docker, and Kubernetes — wired up with both GitHub Actions and Azure Pipelines CI/CD.
 
 ---
 
@@ -10,7 +10,7 @@ A cloud-native reference architecture combining an Angular 20 SPA, .NET 9 micros
 |---|---|
 | Frontend | Angular 20.1.6 (Material 20.1.5) served by NGINX in production |
 | Backend | ASP.NET Core 9.0 (3 services: ApiGateway, UserService, ProductService) |
-| API Gateway | Ocelot 23.0.0 |
+| API Gateway | YARP 2.3.0 |
 | Database | Microsoft SQL Server 2022 Express (one DB per microservice) |
 | Cache | Redis 7-alpine (provisioned, not yet integrated) |
 | Local Orchestration | Docker Compose v3.9 |
@@ -33,7 +33,7 @@ AngularDotNetMicroservices/
 │   ├── workflows/ci-cd.yml           # GitHub Actions: test → ECR push → EKS rollout → S3 sync → CloudFront invalidate (OIDC, no static keys)
 │   └── dependabot.yml                # npm + nuget + docker weekly updates
 ├── src/
-│   ├── ApiGateway/                   # Ocelot gateway (.NET 9)
+│   ├── ApiGateway/                   # YARP gateway (.NET 9)
 │   ├── Microservices/
 │   │   ├── UserService/              # User CRUD (.NET 9 + EF Core)
 │   │   └── ProductService/           # Product CRUD (.NET 9 + EF Core)
@@ -75,7 +75,7 @@ AngularDotNetMicroservices/
 [Browser] → [Angular SPA :4200/:80]
                 │
                 ▼
-        [Ocelot API Gateway :5000]
+        [YARP API Gateway :5000]
               │           │
               ▼           ▼
    [UserService :5100]  [ProductService :5200]
@@ -91,7 +91,7 @@ The Angular client **only ever calls the API Gateway** — it never reaches the 
 | Component | Responsibility |
 |---|---|
 | Angular Client | UI, forms, validation, REST consumption, error interception |
-| API Gateway (Ocelot) | Routing, CORS, single public surface, health aggregation |
+| API Gateway (YARP) | Routing, CORS, single public surface, health aggregation |
 | UserService | User CRUD, EF Core migrations, seeding, health checks |
 | ProductService | Product CRUD, EF Core migrations, seeding, health checks |
 | SQL Server | Persistence (one DB per service) |
@@ -104,20 +104,21 @@ The Angular client **only ever calls the API Gateway** — it never reaches the 
 
 - **Framework:** ASP.NET Core 9.0
 - **Port:** `5000`
-- **Key packages:** `Ocelot 23.0.0`, `Ocelot.Provider.Consul 23.0.0`, `Microsoft.AspNetCore.OpenApi 9.0.7`
-- **Routing config:** `ocelot.json`
+- **Key packages:** `Yarp.ReverseProxy 2.3.0`, `Microsoft.AspNetCore.OpenApi 9.0.7`
+- **Routing config:** `ReverseProxy` section of `appsettings.json`
 - **Health endpoint:** `GET /health` → `{ status: "Healthy", service: "ApiGateway" }`
 - **CORS:** `allow-all` (development-grade)
 
-Configured downstream routes:
+Configured routes (each is a catch-all that forwards the full path and all
+HTTP methods to its cluster; the destination services enforce which methods
+they accept):
 
-| Upstream (client → gateway) | Downstream (gateway → service) | Methods |
-|---|---|---|
-| `/api/users` | `UserService:5100/api/users` | GET, POST, OPTIONS |
-| `/api/users/{id}` | `UserService:5100/api/users/{id}` | GET, PUT, DELETE |
-| `/api/products` | `ProductService:5200/api/products` | GET, POST, OPTIONS |
-| `/api/products/{id}` | `ProductService:5200/api/products/{id}` | GET, PUT, DELETE |
-| `/health` | `UserService:5100/health` | GET |
+| Route (client → gateway) | Cluster (gateway → service) |
+|---|---|
+| `/api/users/{**catch-all}` | `users-cluster` → `http://user-service:5100/` |
+| `/api/products/{**catch-all}` | `products-cluster` → `http://product-service:5200/` |
+
+`GET /health` is served by the gateway itself (not proxied).
 
 ### 4.2 UserService — `src/Microservices/UserService/`
 
@@ -362,7 +363,7 @@ The `tests/` directory and `MicroservicesApp.sln` currently contain **no test pr
 
 | Concern | File |
 |---|---|
-| Gateway routes | `src/ApiGateway/ocelot.json` |
+| Gateway routes | `src/ApiGateway/appsettings.json` (`ReverseProxy` section) |
 | Angular API base URL | `src/ClientApp/src/environments/environment.ts` (and `.prod.ts`) |
 | User schema / seed | `src/Microservices/UserService/Data/UserDbContext.cs` |
 | Product schema / seed | `src/Microservices/ProductService/Data/ProductDbContext.cs` |

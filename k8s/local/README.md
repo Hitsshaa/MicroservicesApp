@@ -60,7 +60,7 @@ Deletes the kind cluster. Pure cleanup — no cloud resources to worry about.
 | `namespace.yaml` | The `angular-micro` namespace |
 | `postgres.yaml` | StatefulSet for Postgres + ConfigMap that seeds the two databases on first boot + PVC + Service |
 | `connection-strings.yaml` | Plain K8s Secrets with the two connection strings (in-cluster only) |
-| `api-gateway.yaml` | Deployment + NodePort Service for the Ocelot gateway |
+| `api-gateway.yaml` | Deployment + NodePort Service for the YARP gateway |
 | `user-service.yaml` | Deployment + ClusterIP Service for UserService |
 | `product-service.yaml` | Deployment + ClusterIP Service for ProductService |
 

@@ -12,7 +12,7 @@ after Terraform provisions the cluster.
 | `serviceaccount-user.yaml` | K8s SA bound to the user-service GCP SA via Workload Identity |
 | `serviceaccount-product.yaml` | Same for product-service |
 | `connection-strings.yaml` | K8s Secrets holding the DB connection strings (rendered at deploy time from Terraform outputs) |
-| `api-gateway.yaml` | Ocelot gateway Deployment + ClusterIP Service |
+| `api-gateway.yaml` | YARP gateway Deployment + ClusterIP Service |
 | `user-service.yaml` | UserService Deployment (uses user-service-sa) + ClusterIP |
 | `product-service.yaml` | ProductService Deployment (uses product-service-sa) + ClusterIP |
 | `angular-client.yaml` | nginx Deployment serving the built SPA + **LoadBalancer Service** (single public IP for the stack) |
